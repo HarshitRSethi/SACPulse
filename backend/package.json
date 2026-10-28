@@ -1,0 +1,33 @@
+{
+  "name": "sacpulse-backend",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "SACPulse Backend - 5-Layer OOP Node.js + Express + Supabase Server",
+  "main": "dist/presentation/server.js",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx watch src/presentation/server.ts",
+    "start": "node dist/presentation/server.js",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "seed": "tsx src/infrastructure.persistence/seed.ts"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.49.1",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "pg": "^8.13.3",
+    "socket.io": "^4.8.1"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.17",
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.13.10",
+    "@types/pg": "^8.11.11",
+    "tsx": "^4.19.3",
+    "typescript": "^5.8.2",
+    "vitest": "^3.0.7"
+  }
+}
