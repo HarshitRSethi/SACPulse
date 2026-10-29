@@ -16,7 +16,9 @@ import {
   Filter,
   CheckCircle2,
   Check,
-  Tag
+  Tag,
+  ChevronLeft,
+  ChevronRight
 } from 'lucide-react';
 
 interface AdminDashboardProps {
@@ -28,6 +30,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentUser }) =
   const [registerLogs, setRegisterLogs] = useState<any[]>([]);
   const [statusFilter, setStatusFilter] = useState<string>('ALL');
   const [searchQuery, setSearchQuery] = useState<string>('');
+  const [currentPage, setCurrentPage] = useState<number>(1);
+  const [totalPages, setTotalPages] = useState<number>(1);
+  const [totalCount, setTotalCount] = useState<number>(0);
+  const pageSize = 25;
   const [users, setUsers] = useState<User[]>([]);
   const [inventory, setInventory] = useState<SACItem[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(false);
@@ -51,15 +57,18 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentUser }) =
     return Array.from(new Set([...defaultCats, ...catsFromInv]));
   }, [inventory]);
 
-  const loadData = async () => {
+  const loadData = async (targetPage = currentPage) => {
     try {
       setIsLoading(true);
-      const [logsData, usersData, invData] = await Promise.all([
-        api.getAdminLogs(statusFilter),
+      const [logsRes, usersData, invData] = await Promise.all([
+        api.getAdminLogs({ status: statusFilter, page: targetPage, limit: pageSize }),
         api.getAllUsers(),
         api.getInventory()
       ]);
-      setRegisterLogs(logsData);
+      setRegisterLogs(logsRes.logs);
+      setTotalCount(logsRes.totalCount);
+      setTotalPages(logsRes.totalPages);
+      setCurrentPage(logsRes.currentPage);
       setUsers(usersData);
       setInventory(invData);
     } catch (err: any) {
@@ -71,7 +80,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentUser }) =
   };
 
   useEffect(() => {
-    loadData();
+    setCurrentPage(1);
+    loadData(1);
 
     const socket = socketService.socket;
     if (socket) {
@@ -89,6 +99,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentUser }) =
       };
     }
   }, [statusFilter]);
+
+  const handlePageChange = (newPage: number) => {
+    if (newPage < 1 || newPage > totalPages || newPage === currentPage) return;
+    setCurrentPage(newPage);
+    loadData(newPage);
+  };
 
   // Clear Defaulter Flag
   const handleClearDefaulter = async (userId: string) => {
@@ -176,18 +192,26 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentUser }) =
     }
   };
 
-  // Safe Date Formatter helper
-  const formatTimestamp = (val: any) => {
-    if (!val) return '—';
+  // Full Date & Time Display Formatter
+  const formatDateTime = (val: any) => {
+    if (!val) return { date: '—', time: '' };
     const d = new Date(val);
-    return isNaN(d.getTime()) ? '—' : d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true });
+    if (isNaN(d.getTime())) return { date: '—', time: '' };
+    const date = d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+    const time = d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true });
+    return { date, time };
+  };
+
+  const formatTimestamp = (val: any) => {
+    const { date, time } = formatDateTime(val);
+    return date === '—' ? '—' : `${date}, ${time}`;
   };
 
   // Tactile refresh handler for table
   const handleRefreshTable = async () => {
     try {
       setIsRefreshingTable(true);
-      await loadData();
+      await loadData(currentPage);
       setShowRefreshedTableCheck(true);
       setTimeout(() => setShowRefreshedTableCheck(false), 1500);
     } finally {
@@ -195,48 +219,26 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentUser }) =
     }
   };
 
-  // Export Filtered Table to CSV (supports both snake_case and camelCase)
-  const handleExportCSV = () => {
-    if (filteredLogs.length === 0) {
-      alert('No logs available to export.');
-      return;
+  // Export Filtered Table to CSV (downloads full historical dataset)
+  const handleExportCSV = async () => {
+    try {
+      const url = statusFilter && statusFilter !== 'ALL'
+        ? `/api/admin/register-logs?format=csv&status=${statusFilter}`
+        : `/api/admin/register-logs?format=csv`;
+      const res = await fetch(url);
+      if (!res.ok) throw new Error('Failed to generate CSV export');
+      const blob = await res.blob();
+      const downloadUrl = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = downloadUrl;
+      link.setAttribute('download', `SACPulse_Register_Logs_${new Date().toISOString().slice(0, 10)}.csv`);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    } catch (err: any) {
+      console.error('Failed to export CSV:', err);
+      alert('Failed to download full historical CSV export.');
     }
-
-    const headers = [
-      'Entry ID',
-      'Batch ID',
-      'Item Name',
-      'Category',
-      'Student Name',
-      'Roll No',
-      'Mobile',
-      'Arrival Time',
-      'Return Time',
-      'Status'
-    ];
-
-    const rows = filteredLogs.map((log) => [
-      `"${log.id || ''}"`,
-      `"${log.batch_id || log.batchId || ''}"`,
-      `"${log.item_name || log.itemName || ''}"`,
-      `"${log.category || ''}"`,
-      `"${log.student_name || log.studentName || ''}"`,
-      `"${log.roll_no || log.rollNo || ''}"`,
-      `"${log.mobile_no || log.mobileNo || ''}"`,
-      `"${log.arrival_time || log.arrivalTime || ''}"`,
-      `"${log.departure_time || log.departureTime || log.returnTime || log.return_time || ''}"`,
-      `"${log.status || ''}"`
-    ]);
-
-    const csvContent = [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.setAttribute('download', `SACPulse_Register_Logs_${new Date().toISOString().slice(0, 10)}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
   };
 
   // Filtered Register Logs (supports both snake_case and camelCase)
@@ -538,6 +540,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentUser }) =
                       const rollNo = (log.roll_no || log.rollNo || '—');
                       const category = log.category || '';
 
+                      const arrivalFormatted = formatDateTime(arrivalVal);
+                      const departureFormatted = formatDateTime(departureVal);
+
                       return (
                         <tr key={log.id} className="hover:bg-zinc-50/70 transition">
                           <td className="px-4 py-3 font-mono text-zinc-400 text-[11px]">
@@ -551,11 +556,17 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentUser }) =
                             <span className="font-semibold text-zinc-900 block">{studentName}</span>
                             <span className="font-mono text-[11px] text-blue-600">{rollNo}</span>
                           </td>
-                          <td className="px-4 py-3 text-zinc-600 font-mono text-[11px]">
-                            {formatTimestamp(arrivalVal)}
+                          <td className="px-4 py-3">
+                            <span className="font-medium text-zinc-900 block">{arrivalFormatted.date}</span>
+                            {arrivalFormatted.time && (
+                              <span className="text-[11px] text-zinc-400 font-mono block">{arrivalFormatted.time}</span>
+                            )}
                           </td>
-                          <td className="px-4 py-3 text-zinc-600 font-mono text-[11px]">
-                            {formatTimestamp(departureVal)}
+                          <td className="px-4 py-3">
+                            <span className="font-medium text-zinc-900 block">{departureFormatted.date}</span>
+                            {departureFormatted.time && (
+                              <span className="text-[11px] text-zinc-400 font-mono block">{departureFormatted.time}</span>
+                            )}
                           </td>
                           <td className="px-4 py-3">
                             <span
@@ -570,6 +581,36 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentUser }) =
                   )}
                 </tbody>
               </table>
+            </div>
+
+            {/* Pagination Footer */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-4 py-3 bg-zinc-50 border-t border-[#E4E4E7] text-xs text-zinc-600">
+              <span className="font-medium text-zinc-500">
+                Showing <span className="font-semibold text-zinc-900 font-mono">{totalCount === 0 ? 0 : (currentPage - 1) * pageSize + 1}</span>–
+                <span className="font-semibold text-zinc-900 font-mono">{Math.min(totalCount, (currentPage - 1) * pageSize + registerLogs.length)}</span> of{' '}
+                <span className="font-semibold text-zinc-900 font-mono">{totalCount}</span> entries
+              </span>
+              <div className="flex items-center gap-2 self-end sm:self-auto">
+                <button
+                  onClick={() => handlePageChange(currentPage - 1)}
+                  disabled={currentPage <= 1 || isLoading}
+                  className="px-3 py-1.5 rounded-xl border border-zinc-200 bg-white hover:bg-zinc-50 text-zinc-700 font-semibold disabled:opacity-40 disabled:cursor-not-allowed transition shadow-xs flex items-center gap-1 active:scale-95"
+                >
+                  <ChevronLeft className="w-3.5 h-3.5" />
+                  Previous
+                </button>
+                <span className="px-2 text-zinc-500 font-mono font-medium text-xs">
+                  Page {currentPage} of {totalPages}
+                </span>
+                <button
+                  onClick={() => handlePageChange(currentPage + 1)}
+                  disabled={currentPage >= totalPages || isLoading}
+                  className="px-3 py-1.5 rounded-xl border border-zinc-200 bg-white hover:bg-zinc-50 text-zinc-700 font-semibold disabled:opacity-40 disabled:cursor-not-allowed transition shadow-xs flex items-center gap-1 active:scale-95"
+                >
+                  Next
+                  <ChevronRight className="w-3.5 h-3.5" />
+                </button>
+              </div>
             </div>
           </div>
         </div>

@@ -21,27 +21,40 @@ export class AdminController extends BaseController {
 
   /**
    * GET /api/admin/register-logs
-   * Section 5: Master register logs table with CSV export option.
+   * Section 5: Master register logs table with CSV export option and 25-row pagination.
    */
   public getRegisterLogs = async (req: Request, res: Response): Promise<Response | void> => {
     try {
-      const { format, startDate, endDate, status } = req.query;
+      const { format, startDate, endDate, status, page, limit } = req.query;
 
-      const logs = await this.regRepo.getMasterLogs({
+      const isCsv = format === 'csv';
+      const pageNum = page ? Math.max(1, parseInt(page as string, 10) || 1) : 1;
+      const limitNum = limit ? Math.max(1, parseInt(limit as string, 10) || 25) : 25;
+
+      const result = await this.regRepo.getMasterLogs({
         startDate: startDate as string,
         endDate: endDate as string,
-        status: status as string
+        status: status as string,
+        page: pageNum,
+        limit: limitNum,
+        unpaginated: isCsv
       });
 
-      if (format === 'csv') {
-        const csvContent = this.regRepo.generateCSV(logs);
+      if (isCsv) {
+        const csvContent = this.regRepo.generateCSV(result.logs);
         res.setHeader('Content-Type', 'text/csv');
         res.setHeader('Content-Disposition', 'attachment; filename="sacpulse_register_logs.csv"');
         res.status(200).send(csvContent);
         return;
       }
 
-      return this.ok(res, logs);
+      return res.status(200).json({
+        success: true,
+        data: result.logs,
+        totalCount: result.totalCount,
+        totalPages: result.totalPages,
+        currentPage: result.currentPage
+      });
     } catch (err: any) {
       return this.fail(res, err);
     }

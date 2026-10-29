@@ -147,14 +147,27 @@ export const api = {
   },
 
   // Admin Console
-  async getAdminLogs(status?: string): Promise<any[]> {
-    const url = status && status !== 'ALL' 
-      ? `${API_BASE}/admin/register-logs?status=${status}` 
-      : `${API_BASE}/admin/register-logs`;
+  async getAdminLogs(params?: { status?: string; page?: number; limit?: number }): Promise<{
+    logs: any[];
+    totalCount: number;
+    totalPages: number;
+    currentPage: number;
+  }> {
+    const query = new URLSearchParams();
+    if (params?.status && params.status !== 'ALL') query.set('status', params.status);
+    if (params?.page) query.set('page', String(params.page));
+    if (params?.limit) query.set('limit', String(params.limit));
+
+    const url = `${API_BASE}/admin/register-logs${query.toString() ? `?${query.toString()}` : ''}`;
     const res = await fetch(url);
     const json = await res.json();
     if (!json.success) throw new Error(json.error || 'Failed to fetch admin logs');
-    return json.data;
+    return {
+      logs: Array.isArray(json.data) ? json.data : [],
+      totalCount: json.totalCount ?? (Array.isArray(json.data) ? json.data.length : 0),
+      totalPages: json.totalPages ?? 1,
+      currentPage: json.currentPage ?? (params?.page || 1)
+    };
   },
 
   async clearDefaulter(userId: string): Promise<any> {

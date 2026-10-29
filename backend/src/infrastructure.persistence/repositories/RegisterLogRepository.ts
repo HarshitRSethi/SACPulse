@@ -232,21 +232,29 @@ export class RegisterLogRepository {
 
   /**
    * Master Log Query for Admin Console & CSV Export
+   * Supports pagination: LIMIT limit OFFSET (page - 1) * limit
    */
   public async getMasterLogs(options?: {
     startDate?: string;
     endDate?: string;
     status?: string;
-  }): Promise<any[]> {
+    page?: number;
+    limit?: number;
+    unpaginated?: boolean;
+  }): Promise<{ logs: any[]; totalCount: number; totalPages: number; currentPage: number }> {
     const supabase = this.db.getSupabase();
     if (!supabase) throw new Error('Supabase client is not initialized.');
 
+    const page = options?.page && options.page > 0 ? options.page : 1;
+    const limit = options?.limit && options.limit > 0 ? options.limit : 25;
+    const unpaginated = options?.unpaginated ?? false;
+
     let query = supabase
       .from('register_logs')
-      .select('*')
+      .select('*', { count: 'exact' })
       .order('arrival_time', { ascending: false });
 
-    if (options?.status) {
+    if (options?.status && options.status !== 'ALL') {
       query = query.eq('status', options.status);
     }
     if (options?.startDate) {
@@ -256,12 +264,26 @@ export class RegisterLogRepository {
       query = query.lte('arrival_time', options.endDate);
     }
 
-    const { data, error } = await query;
+    if (!unpaginated) {
+      const offset = (page - 1) * limit;
+      query = query.range(offset, offset + limit - 1);
+    }
+
+    const { data, count, error } = await query;
     if (error) {
       throw new Error(`Failed to query master register logs: ${error.message}`);
     }
 
-    return data || [];
+    const logs = data || [];
+    const totalCount = count !== null && count !== undefined ? count : logs.length;
+    const totalPages = Math.max(1, Math.ceil(totalCount / limit));
+
+    return {
+      logs,
+      totalCount,
+      totalPages,
+      currentPage: page
+    };
   }
 
   public generateCSV(logs: any[]): string {
