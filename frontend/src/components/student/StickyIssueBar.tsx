@@ -37,7 +37,7 @@ export const StickyIssueBar: React.FC<StickyIssueBarProps> = ({
           </span>
         </div>
 
-        <span className="text-zinc-600 hidden sm:inline">•</span>
+        <span className="text-zinc-500">•</span>
 
         {/* Proceed Button */}
         <button

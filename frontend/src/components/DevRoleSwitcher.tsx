@@ -66,7 +66,7 @@ export const DevRoleSwitcher: React.FC<DevRoleSwitcherProps> = ({
   isSocketConnected
 }) => {
   return (
-    <header className="sticky top-0 z-50 bg-white/95 backdrop-blur-md border-b border-[#E4E4E7] px-4 py-2.5 shadow-sm">
+    <header className="sticky top-0 z-20 bg-white/95 backdrop-blur-md border-b border-[#E4E4E7] px-4 py-2.5 shadow-sm">
       <div className="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-3">
         {/* Branding & Socket Live Indicator */}
         <div className="flex items-center gap-3">

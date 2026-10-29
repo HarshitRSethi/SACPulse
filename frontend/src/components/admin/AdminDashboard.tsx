@@ -177,7 +177,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentUser }) =
   };
 
   // Safe Date Formatter helper
-  const formatTimestamp = (val: string | Date | null | undefined) => {
+  const formatTimestamp = (val: any) => {
     if (!val) return '—';
     const d = new Date(val);
     return isNaN(d.getTime()) ? '—' : d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true });
@@ -531,12 +531,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentUser }) =
                         badgeStyle = 'bg-amber-50 text-amber-800 border-amber-200';
                       }
 
-                      const arrivalVal = log.arrival_time ?? log.arrivalTime;
-                      const departureVal = log.departure_time ?? log.departureTime ?? log.returnTime ?? log.return_time;
-                      const itemName = log.item_name ?? log.itemName ?? 'Item';
-                      const studentName = log.student_name ?? log.studentName ?? 'Student';
-                      const rollNo = log.roll_no ?? log.rollNo ?? '';
-                      const category = log.category ?? '';
+                      const arrivalVal = log.arrival_time || log.arrivalTime;
+                      const departureVal = log.departure_time || log.departureTime || log.returnTime || log.return_time;
+                      const itemName = (log.item_name || log.itemName || 'Item');
+                      const studentName = (log.student_name || log.studentName || 'Student');
+                      const rollNo = (log.roll_no || log.rollNo || '—');
+                      const category = log.category || '';
 
                       return (
                         <tr key={log.id} className="hover:bg-zinc-50/70 transition">

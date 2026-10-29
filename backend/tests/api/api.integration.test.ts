@@ -345,9 +345,18 @@ describe('SACPulse REST API & Real-Time Events Integration Tests', () => {
     const { data: items } = await invRes.json();
     const ball = items.find((i: any) => i.name === 'TT Ball');
 
-    // Ensure studentA is not locked as defaulter before issuing
+    // Ensure studentA is not locked as defaulter before issuing and reset TT Ball stock
     const userRepo = new (await import('../../src/infrastructure.persistence/repositories/UserRepository.js')).UserRepository();
     await userRepo.setDefaulter(studentA.id, false);
+
+    const sacItemRepo = new (await import('../../src/infrastructure.persistence/repositories/SACItemRepository.js')).SACItemRepository();
+    const ballEntity = await sacItemRepo.findById(ball.id);
+    if (ballEntity && ballEntity.getAvailableQty() < 1) {
+      (ballEntity as any).availableQty = 12;
+      (ballEntity as any).totalQty = 12;
+      (ballEntity as any).damagedQty = 0;
+      await sacItemRepo.save(ballEntity);
+    }
 
     // Issue TT Ball
     const reqRes = await fetch(`${baseUrl}/api/issue-requests`, {
@@ -403,7 +412,13 @@ describe('SACPulse REST API & Real-Time Events Integration Tests', () => {
     });
     expect(lateAcceptRes.status).toBe(409);
 
-    // Clean up defaulter
+    // Clean up defaulter and restore ball stock
     await fetch(`${baseUrl}/api/admin/users/${studentA.id}/clear-defaulter`, { method: 'POST' });
+    if (ballEntity) {
+      (ballEntity as any).availableQty = 12;
+      (ballEntity as any).totalQty = 12;
+      (ballEntity as any).damagedQty = 0;
+      await sacItemRepo.save(ballEntity);
+    }
   });
 });

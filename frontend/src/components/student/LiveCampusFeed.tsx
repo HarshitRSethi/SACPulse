@@ -9,7 +9,9 @@ import {
   Dumbbell,
   Clock,
   Sparkles,
-  DoorOpen
+  DoorOpen,
+  MapPin,
+  Users
 } from 'lucide-react';
 
 interface LiveCampusFeedProps {
@@ -32,11 +34,10 @@ export const LiveCampusFeed: React.FC<LiveCampusFeedProps> = ({
 
   // Dynamic Categories derived directly from DB items
   const dynamicCategories = useMemo(() => {
-    const categoriesSet = new Set(items.map((i) => i.category).filter(Boolean));
-    return ['All', ...Array.from(categoriesSet)];
+    return ['All', ...new Set(items.map((i) => i.category).filter(Boolean))];
   }, [items]);
 
-  // Real-time filtering by category and search query
+  // Real-time filtering by category, search query, and location
   const filteredItems = useMemo(() => {
     return items.filter((item) => {
       const matchesCategory =
@@ -48,12 +49,20 @@ export const LiveCampusFeed: React.FC<LiveCampusFeedProps> = ({
 
       const q = searchQuery.toLowerCase().trim();
       const matchName = item.name.toLowerCase().includes(q);
-      const matchCat = item.category.toLowerCase().includes(q);
-      const matchType = item.itemType.toLowerCase().includes(q);
+      const matchCat = (item.category || '').toLowerCase().includes(q);
+      const matchType = (item.itemType || '').toLowerCase().includes(q);
+      const itemLocation = ((item as any).location || '').toLowerCase();
       const matchLocation =
-        item.itemType === 'ROOM_KEY'
-          ? (item.name.includes('Dance') ? '1st floor' : 'ground floor').includes(q)
-          : false;
+        itemLocation.includes(q) ||
+        (item.itemType === 'ROOM_KEY' && (
+          q.includes('room') ||
+          q.includes('space') ||
+          q.includes('sac') ||
+          q.includes('facility') ||
+          q.includes('court') ||
+          q.includes('hall') ||
+          (item.category && item.category.toLowerCase().includes(q))
+        ));
 
       return matchName || matchCat || matchType || matchLocation;
     });
@@ -171,11 +180,24 @@ export const LiveCampusFeed: React.FC<LiveCampusFeedProps> = ({
                       {room.name}
                     </h3>
 
+                    {/* Room Location & Capacity Tags */}
+                    <div className="flex flex-wrap items-center gap-2 mt-2.5">
+                      <span className="inline-flex items-center gap-1 text-xs text-zinc-600 font-medium">
+                        <MapPin className="w-3.5 h-3.5 text-zinc-400 flex-shrink-0" />
+                        SAC Facility • {room.category}
+                      </span>
+                      <span className="text-zinc-300">•</span>
+                      <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-zinc-600 bg-zinc-100 border border-zinc-200 px-2 py-0.5 rounded-md">
+                        <Users className="w-3 h-3 text-zinc-500" />
+                        Capacity: Multi-Access Space
+                      </span>
+                    </div>
+
                     {/* Dynamic Key Info */}
                     <div className="flex items-center gap-2 mt-2">
                       <span className="inline-flex items-center gap-1 text-xs text-zinc-500 font-mono">
                         <KeyRound className="w-3.5 h-3.5 text-zinc-400" />
-                        {isAvailable ? 'Physical Key in SAC Locker' : 'Key Issued & Handed Out'}
+                        {isAvailable ? 'Physical Key in SAC Locker' : 'Key Issued & In Use'}
                       </span>
                     </div>
 
@@ -260,7 +282,7 @@ export const LiveCampusFeed: React.FC<LiveCampusFeedProps> = ({
                           item.availableQty > 0 ? 'text-emerald-700' : 'text-rose-600'
                         }`}
                       >
-                        {item.availableQty} / {item.totalQty} Available
+                        {item.availableQty} of {item.totalQty} available
                       </span>
                     </div>
 
