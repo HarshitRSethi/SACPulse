@@ -1,4 +1,5 @@
-import React from 'react';
+import React, { useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import type { SACItem } from '../../types/index';
 import { ShieldAlert, CheckCircle, ArrowRight, X } from 'lucide-react';
 
@@ -22,13 +23,30 @@ export const IssueConfirmModal: React.FC<IssueConfirmModalProps> = ({
   selectedItems,
   isLoading
 }) => {
+  // Lock background scroll (prevent scroll bleed on mobile/desktop)
+  useEffect(() => {
+    if (isOpen) {
+      document.body.style.overflow = 'hidden';
+    } else {
+      document.body.style.overflow = '';
+    }
+    return () => {
+      document.body.style.overflow = '';
+    };
+  }, [isOpen]);
+
   if (!isOpen) return null;
 
   const totalItems = selectedItems.reduce((acc, curr) => acc + curr.qty, 0);
 
-  return (
-    <div className="fixed inset-0 z-[100] bg-zinc-950/60 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-150">
-      <div className="relative w-full max-w-lg bg-white border border-[#E4E4E7] rounded-3xl shadow-2xl p-6 text-zinc-900 overflow-hidden">
+  return createPortal(
+    <div
+      onClick={(e) => {
+        if (e.target === e.currentTarget && !isLoading) onClose();
+      }}
+      className="fixed inset-0 z-[999] bg-zinc-950/70 backdrop-blur-sm overflow-y-auto flex items-center justify-center p-4 animate-in fade-in duration-150"
+    >
+      <div className="relative w-full max-w-lg max-h-[85vh] overflow-y-auto bg-white border border-[#E4E4E7] rounded-3xl shadow-2xl p-6 text-zinc-900">
         {/* Header */}
         <div className="flex items-center justify-between pb-4 border-b border-zinc-100">
           <div>
@@ -120,6 +138,7 @@ export const IssueConfirmModal: React.FC<IssueConfirmModalProps> = ({
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 };

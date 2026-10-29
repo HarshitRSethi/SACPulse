@@ -20,18 +20,33 @@ code, pre, .font-mono {
   font-family: 'JetBrains Mono', monospace;
 }
 
-/* Custom subtle scrollbar */
+/* Custom subtle, compact scrollbar with shortened length */
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 4px;
+  height: 4px;
 }
 ::-webkit-scrollbar-track {
   background: transparent;
+  margin: 12px 0; /* Decreases the scrollbar length so it floats away from top/bottom edges */
+}
+::-webkit-scrollbar-track:horizontal {
+  margin: 0 12px; /* Decreases horizontal scrollbar length */
 }
 ::-webkit-scrollbar-thumb {
-  background: #E4E4E7;
+  background: #D4D4D8;
   border-radius: 9999px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #D4D4D8;
+  background: #A1A1AA;
+}
+
+/* Utility to completely hide scrollbar on horizontal pill carousels */
+.scrollbar-none::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+.scrollbar-none {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
 }
