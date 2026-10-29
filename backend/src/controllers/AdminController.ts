@@ -56,6 +56,7 @@ export class AdminController extends BaseController {
         success: true,
         data: result.logs,
         totalCount: result.totalCount,
+        todayCount: result.todayCount,
         totalPages: result.totalPages,
         currentPage: result.currentPage
       });

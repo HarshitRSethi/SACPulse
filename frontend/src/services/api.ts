@@ -150,6 +150,7 @@ export const api = {
   async getAdminLogs(params?: { status?: string; page?: number; limit?: number }): Promise<{
     logs: any[];
     totalCount: number;
+    todayCount: number;
     totalPages: number;
     currentPage: number;
   }> {
@@ -165,6 +166,7 @@ export const api = {
     return {
       logs: Array.isArray(json.data) ? json.data : [],
       totalCount: json.totalCount ?? (Array.isArray(json.data) ? json.data.length : 0),
+      todayCount: json.todayCount ?? 0,
       totalPages: json.totalPages ?? 1,
       currentPage: json.currentPage ?? (params?.page || 1)
     };

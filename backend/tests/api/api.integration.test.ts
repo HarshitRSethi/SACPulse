@@ -83,6 +83,8 @@ describe('SACPulse REST API & Real-Time Events Integration Tests', () => {
     const logsBody = await logsRes.json();
     expect(logsBody.success).toBe(true);
     expect(Array.isArray(logsBody.data)).toBe(true);
+    expect(typeof logsBody.totalCount).toBe('number');
+    expect(typeof logsBody.todayCount).toBe('number');
 
     // CSV Export
     const csvRes = await fetch(`${baseUrl}/api/admin/register-logs?format=csv`);

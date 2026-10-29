@@ -34,6 +34,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentUser }) =
   const [currentPage, setCurrentPage] = useState<number>(1);
   const [totalPages, setTotalPages] = useState<number>(1);
   const [totalCount, setTotalCount] = useState<number>(0);
+  const [todayCount, setTodayCount] = useState<number>(0);
   const pageSize = 25;
   const [users, setUsers] = useState<User[]>([]);
   const [inventory, setInventory] = useState<SACItem[]>([]);
@@ -70,6 +71,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentUser }) =
       ]);
       setRegisterLogs(logsRes.logs);
       setTotalCount(logsRes.totalCount);
+      setTodayCount(logsRes.todayCount);
       setTotalPages(logsRes.totalPages);
       setCurrentPage(logsRes.currentPage);
       setUsers(usersData);
@@ -366,10 +368,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentUser }) =
           }`}
         >
           <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-400 block">
-            Digital Register
+            Today's Activity
           </span>
           <span className="font-mono text-xl font-extrabold text-zinc-900 mt-0.5 block">
-            {registerLogs.length} Entries
+            {todayCount} Today
+          </span>
+          <span className="text-[11px] text-zinc-400 font-mono block mt-0.5">
+            {totalCount} total all-time
           </span>
         </button>
 

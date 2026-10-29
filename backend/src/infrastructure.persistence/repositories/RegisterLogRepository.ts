@@ -241,7 +241,7 @@ export class RegisterLogRepository {
     page?: number;
     limit?: number;
     unpaginated?: boolean;
-  }): Promise<{ logs: any[]; totalCount: number; totalPages: number; currentPage: number }> {
+  }): Promise<{ logs: any[]; totalCount: number; todayCount: number; totalPages: number; currentPage: number }> {
     const supabase = this.db.getSupabase();
     if (!supabase) throw new Error('Supabase client is not initialized.');
 
@@ -269,18 +269,37 @@ export class RegisterLogRepository {
       query = query.range(offset, offset + limit - 1);
     }
 
-    const { data, count, error } = await query;
+    // Today's activity count: arrival_time >= local start of day
+    const startOfToday = new Date();
+    startOfToday.setHours(0, 0, 0, 0);
+    const todayIso = startOfToday.toISOString();
+
+    const todayQuery = supabase
+      .from('register_logs')
+      .select('*', { count: 'exact', head: true })
+      .gte('arrival_time', todayIso);
+
+    const [{ data, count, error }, { count: todayCountVal, error: todayError }] = await Promise.all([
+      query,
+      todayQuery
+    ]);
+
     if (error) {
       throw new Error(`Failed to query master register logs: ${error.message}`);
+    }
+    if (todayError) {
+      console.warn('Failed to query todayCount for register logs:', todayError.message);
     }
 
     const logs = data || [];
     const totalCount = count !== null && count !== undefined ? count : logs.length;
+    const todayCount = todayCountVal !== null && todayCountVal !== undefined ? todayCountVal : 0;
     const totalPages = Math.max(1, Math.ceil(totalCount / limit));
 
     return {
       logs,
       totalCount,
+      todayCount,
       totalPages,
       currentPage: page
     };
