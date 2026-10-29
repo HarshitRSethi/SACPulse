@@ -11,10 +11,10 @@ export class UserRepository {
   private mapRowToEntity(row: any): User {
     const role: UserRole = row.role;
     if (role === 'GUARD') {
-      return new Guard(row.id, row.name, row.email, 'DESK_1');
+      return new Guard(row.id, row.name, row.email, 'DESK_1', row.mobile_no || null);
     }
     if (role === 'ADMIN') {
-      return new Admin(row.id, row.name, row.email);
+      return new Admin(row.id, row.name, row.email, row.mobile_no || null);
     }
     // Default to Student
     return new Student(
@@ -156,5 +156,77 @@ export class UserRepository {
     }
 
     return (data || []).map((row) => this.mapRowToEntity(row));
+  }
+
+  public async findWhitelistedStaff(email: string): Promise<{ id: string; email: string; name: string; role: string } | null> {
+    const supabase = this.db.getSupabase();
+    if (!supabase) throw new Error('Supabase client is not initialized.');
+
+    const { data, error } = await supabase
+      .from('whitelisted_staff')
+      .select('*')
+      .ilike('email', email.trim())
+      .maybeSingle();
+
+    if (error) {
+      throw new Error(`Failed to query whitelisted_staff for ${email}: ${error.message}`);
+    }
+    return data || null;
+  }
+
+  public async createUser(userData: {
+    email: string;
+    name: string;
+    role: UserRole;
+    rollNo?: string | null;
+    mobileNo?: string | null;
+  }): Promise<User> {
+    const supabase = this.db.getSupabase();
+    if (!supabase) throw new Error('Supabase client is not initialized.');
+
+    const { data, error } = await supabase
+      .from('users')
+      .insert({
+        email: userData.email,
+        name: userData.name,
+        role: userData.role,
+        roll_no: userData.rollNo ?? null,
+        mobile_no: userData.mobileNo ?? null,
+        is_defaulter: false,
+        penalty_until: null
+      })
+      .select('*')
+      .single();
+
+    if (error) {
+      throw new Error(`Failed to create user ${userData.email}: ${error.message}`);
+    }
+    return this.mapRowToEntity(data);
+  }
+
+  public async updateUser(
+    userId: string,
+    updates: { name?: string; role?: UserRole; rollNo?: string | null; mobileNo?: string | null }
+  ): Promise<User> {
+    const supabase = this.db.getSupabase();
+    if (!supabase) throw new Error('Supabase client is not initialized.');
+
+    const payload: any = {};
+    if (updates.name !== undefined) payload.name = updates.name;
+    if (updates.role !== undefined) payload.role = updates.role;
+    if (updates.rollNo !== undefined) payload.roll_no = updates.rollNo;
+    if (updates.mobileNo !== undefined) payload.mobile_no = updates.mobileNo;
+
+    const { data, error } = await supabase
+      .from('users')
+      .update(payload)
+      .eq('id', userId)
+      .select('*')
+      .single();
+
+    if (error) {
+      throw new Error(`Failed to update user ${userId}: ${error.message}`);
+    }
+    return this.mapRowToEntity(data);
   }
 }

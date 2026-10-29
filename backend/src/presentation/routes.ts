@@ -4,6 +4,7 @@ import { IssueRequestController } from '../controllers/IssueRequestController.js
 import { GuardCounterController } from '../controllers/GuardCounterController.js';
 import { TransferController } from '../controllers/TransferController.js';
 import { AdminController } from '../controllers/AdminController.js';
+import { AuthController } from '../controllers/AuthController.js';
 import { UserRepository } from '../infrastructure.persistence/repositories/UserRepository.js';
 import { RegisterLogRepository } from '../infrastructure.persistence/repositories/RegisterLogRepository.js';
 import { Student } from '../domain.entities/User.js';
@@ -11,6 +12,7 @@ import { Student } from '../domain.entities/User.js';
 export function createApiRouter(): Router {
   const router = Router();
 
+  const authCtrl = new AuthController();
   const inventoryCtrl = new InventoryController();
   const issueReqCtrl = new IssueRequestController();
   const guardCtrl = new GuardCounterController();
@@ -18,6 +20,11 @@ export function createApiRouter(): Router {
   const adminCtrl = new AdminController();
   const userRepo = new UserRepository();
   const regRepo = new RegisterLogRepository();
+
+  // 0. Authentication & Onboarding
+  router.post('/auth/google', authCtrl.googleAuth);
+  router.patch('/auth/mobile-setup', authCtrl.mobileSetup);
+  router.patch('/auth/onboarding-mobile', authCtrl.mobileSetup);
 
   // 1. Inventory & Live Campus Status
   router.get('/inventory', inventoryCtrl.getInventory);

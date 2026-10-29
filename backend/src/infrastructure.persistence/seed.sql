@@ -36,3 +36,10 @@ ON CONFLICT (name) DO UPDATE SET
   available_qty = EXCLUDED.available_qty,
   damaged_qty = EXCLUDED.damaged_qty,
   occupied_since = EXCLUDED.occupied_since;
+
+-- 3. Whitelisted Staff
+INSERT INTO whitelisted_staff (email, name, role)
+VALUES
+  ('guard.sac.iiita@gmail.com', 'SAC Guard Ramesh', 'GUARD')
+ON CONFLICT (email) DO NOTHING;
+

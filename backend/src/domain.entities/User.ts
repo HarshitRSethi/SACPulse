@@ -14,8 +14,9 @@ export abstract class User {
   protected name: string;
   protected readonly email: string;
   protected role: UserRole;
+  protected mobileNo: string | null;
 
-  constructor(id: string, name: string, email: string, role: UserRole) {
+  constructor(id: string, name: string, email: string, role: UserRole, mobileNo: string | null = null) {
     if (!id || !name || !email) {
       throw new Error('User must have an id, name, and email.');
     }
@@ -23,6 +24,7 @@ export abstract class User {
     this.name = name;
     this.email = email;
     this.role = role;
+    this.mobileNo = mobileNo;
   }
 
   public getId(): string {
@@ -49,6 +51,14 @@ export abstract class User {
     this.role = role;
   }
 
+  public getMobileNo(): string | null {
+    return this.mobileNo;
+  }
+
+  public setMobileNo(mobileNo: string | null): void {
+    this.mobileNo = mobileNo;
+  }
+
   /**
    * Polymorphic method to determine user dashboard destination.
    */
@@ -61,7 +71,6 @@ export abstract class User {
  */
 export class Student extends User {
   private rollNo: string;
-  private mobileNo: string | null;
   private isDefaulter: boolean;
   private penaltyUntil: Date | null;
 
@@ -74,9 +83,8 @@ export class Student extends User {
     isDefaulter: boolean = false,
     penaltyUntil: Date | null = null
   ) {
-    super(id, name, email, 'STUDENT');
+    super(id, name, email, 'STUDENT', mobileNo);
     this.rollNo = rollNo;
-    this.mobileNo = mobileNo;
     this.isDefaulter = isDefaulter;
     this.penaltyUntil = penaltyUntil;
   }
@@ -178,8 +186,14 @@ export class Student extends User {
 export class Guard extends User {
   private deskId: string;
 
-  constructor(id: string, name: string, email: string, deskId: string = 'DESK_1') {
-    super(id, name, email, 'GUARD');
+  constructor(
+    id: string,
+    name: string,
+    email: string,
+    deskId: string = 'DESK_1',
+    mobileNo: string | null = null
+  ) {
+    super(id, name, email, 'GUARD', mobileNo);
     this.deskId = deskId;
   }
 
@@ -239,8 +253,8 @@ export class Guard extends User {
  * Inherits from User, handles defaulter resets, cooldown resets, role updates, and item master data.
  */
 export class Admin extends User {
-  constructor(id: string, name: string, email: string) {
-    super(id, name, email, 'ADMIN');
+  constructor(id: string, name: string, email: string, mobileNo: string | null = null) {
+    super(id, name, email, 'ADMIN', mobileNo);
   }
 
   public clearDefaulter(student: Student): void {

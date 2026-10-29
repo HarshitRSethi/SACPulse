@@ -123,6 +123,14 @@ export const SEED_SAC_ITEMS = [
   }
 ];
 
+export const SEED_WHITELISTED_STAFF = [
+  {
+    email: 'guard.sac.iiita@gmail.com',
+    name: 'SAC Guard Ramesh',
+    role: 'GUARD'
+  }
+];
+
 export async function runSeed(): Promise<void> {
   console.log('🌱 Starting SACPulse Supabase Database Seeding...');
   const db = DatabaseConnection.getInstance();
@@ -140,12 +148,22 @@ export async function runSeed(): Promise<void> {
     } finally {
       await db.close();
     }
-  } else {
-    console.log('ℹ️ No active direct pool connection configured in DATABASE_URL.');
-    console.log('ℹ️ Verified seed data definition:');
-    console.log(` - ${SEED_USERS.length} Test Accounts (Student A, Student B, SAC Guard, SAC Admin)`);
-    console.log(` - ${SEED_SAC_ITEMS.length} SAC Items (Sports Equipment & Room Keys)`);
   }
+
+  const supabase = db.getSupabase();
+  if (supabase) {
+    try {
+      await supabase.from('whitelisted_staff').upsert(SEED_WHITELISTED_STAFF, { onConflict: 'email' });
+      console.log('✅ Successfully synced whitelisted_staff via Supabase client!');
+    } catch (err: any) {
+      console.warn('⚠️ Supabase client upsert notice:', err.message);
+    }
+  }
+
+  console.log('ℹ️ Verified seed data definition:');
+  console.log(` - ${SEED_USERS.length} Test Accounts (Student A, Student B, SAC Guard, SAC Admin)`);
+  console.log(` - ${SEED_SAC_ITEMS.length} SAC Items (Sports Equipment & Room Keys)`);
+  console.log(` - ${SEED_WHITELISTED_STAFF.length} Whitelisted Staff Accounts`);
 }
 
 // Run directly when called from command line
