@@ -421,4 +421,38 @@ describe('SACPulse REST API & Real-Time Events Integration Tests', () => {
       await sacItemRepo.save(ballEntity);
     }
   });
+
+  // 8. Admin Inventory Management & Deletion Safety Check
+  it('Admin DELETE /api/admin/inventory/:id: rejects with 400 if active holdings exist, succeeds otherwise', async () => {
+    // 1. Create a temporary item
+    const createRes = await fetch(`${baseUrl}/api/admin/inventory`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: 'Temp Squash Ball',
+        category: 'Squash',
+        itemType: 'EQUIPMENT',
+        totalQty: 2,
+        availableQty: 2
+      })
+    });
+    expect(createRes.status).toBe(200);
+    const { data: createdBody } = await createRes.json();
+    const tempItemId = createdBody.item.id;
+
+    // 2. Delete item without active holdings -> succeeds with 200
+    const deleteRes = await fetch(`${baseUrl}/api/admin/inventory/${tempItemId}`, {
+      method: 'DELETE'
+    });
+    expect(deleteRes.status).toBe(200);
+    const deleteBody = await deleteRes.json();
+    expect(deleteBody.success).toBe(true);
+    expect(deleteBody.data.deletedItemId).toBe(tempItemId);
+
+    // Verify it is excluded from live inventory
+    const invRes = await fetch(`${baseUrl}/api/inventory`);
+    const { data: items } = await invRes.json();
+    const found = items.find((i: any) => i.id === tempItemId);
+    expect(found).toBeUndefined();
+  });
 });

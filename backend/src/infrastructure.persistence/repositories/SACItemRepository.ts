@@ -37,6 +37,7 @@ export class SACItemRepository {
     const { data, error } = await supabase
       .from('sac_items')
       .select('*')
+      .or('is_archived.is.null,is_archived.eq.false')
       .order('name');
 
     if (error) {
@@ -125,5 +126,29 @@ export class SACItemRepository {
     }
 
     return this.mapRowToEntity(data);
+  }
+
+  public async delete(id: string): Promise<void> {
+    const supabase = this.db.getSupabase();
+    if (!supabase) {
+      throw new Error('Supabase client is not initialized.');
+    }
+
+    // Try physical delete; if foreign key constraint blocks it, mark as archived
+    const { error: deleteError } = await supabase
+      .from('sac_items')
+      .delete()
+      .eq('id', id);
+
+    if (deleteError) {
+      const { error: archiveError } = await supabase
+        .from('sac_items')
+        .update({ is_archived: true })
+        .eq('id', id);
+
+      if (archiveError) {
+        throw new Error(`Failed to delete or archive SAC item ${id}: ${archiveError.message}`);
+      }
+    }
   }
 }

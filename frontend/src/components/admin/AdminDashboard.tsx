@@ -18,7 +18,8 @@ import {
   Check,
   Tag,
   ChevronLeft,
-  ChevronRight
+  ChevronRight,
+  Trash2
 } from 'lucide-react';
 
 interface AdminDashboardProps {
@@ -40,6 +41,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentUser }) =
   const [isRefreshingTable, setIsRefreshingTable] = useState<boolean>(false);
   const [showRefreshedTableCheck, setShowRefreshedTableCheck] = useState<boolean>(false);
   const [actionMessage, setActionMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [itemToDelete, setItemToDelete] = useState<SACItem | null>(null);
+  const [isDeleting, setIsDeleting] = useState<boolean>(false);
 
   // New Item form state with dynamic and custom category creation
   const [newItemName, setNewItemName] = useState('');
@@ -150,6 +153,34 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentUser }) =
       await loadData();
     } catch (err: any) {
       setActionMessage({ type: 'error', text: err.message || 'Failed to update stock' });
+    }
+  };
+
+  // Delete Item Handlers
+  const handleDeleteClick = (item: SACItem) => {
+    setActionMessage(null);
+    setItemToDelete(item);
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!itemToDelete) return;
+    try {
+      setIsDeleting(true);
+      setActionMessage(null);
+      await api.deleteInventory(itemToDelete.id);
+      setActionMessage({
+        type: 'success',
+        text: `Item "${itemToDelete.name}" deleted successfully.`
+      });
+      setItemToDelete(null);
+      await loadData();
+    } catch (err: any) {
+      setActionMessage({
+        type: 'error',
+        text: err.message || 'Failed to delete item.'
+      });
+    } finally {
+      setIsDeleting(false);
     }
   };
 
@@ -893,9 +924,21 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentUser }) =
                     <span className="text-[11px] font-semibold text-zinc-600 px-2.5 py-0.5 rounded-full bg-zinc-100 border border-zinc-200">
                       {item.category}
                     </span>
-                    <span className="font-mono text-xs font-bold text-purple-700 bg-purple-50 px-2 py-0.5 rounded-md border border-purple-100">
-                      {item.itemType}
-                    </span>
+                    <div className="flex items-center gap-1.5">
+                      <span className="font-mono text-xs font-bold text-purple-700 bg-purple-50 px-2 py-0.5 rounded-md border border-purple-100">
+                        {item.itemType}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteClick(item)}
+                        disabled={isLoading || isDeleting}
+                        className="p-1 rounded-lg text-zinc-400 hover:text-rose-600 hover:bg-rose-50 border border-transparent hover:border-rose-200 transition"
+                        title={`Delete ${item.name}`}
+                        aria-label={`Delete ${item.name}`}
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
                   </div>
                   <h4 className="font-bold text-base text-zinc-900">{item.name}</h4>
 
@@ -929,6 +972,50 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentUser }) =
                 </div>
               </div>
             ))}
+          </div>
+        </div>
+      )}
+
+      {/* Delete Item Confirmation Dialog */}
+      {itemToDelete && (
+        <div className="fixed inset-0 z-[100] bg-zinc-950/60 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-150">
+          <div className="bg-white border border-[#E4E4E7] rounded-3xl p-6 max-w-md w-full shadow-2xl space-y-4 animate-in zoom-in-95 duration-150">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-2xl bg-rose-50 border border-rose-200 flex items-center justify-center text-rose-600 flex-shrink-0">
+                <Trash2 className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-zinc-900">Confirm Item Deletion</h3>
+                <p className="text-xs text-zinc-500">SAC Inventory Manager</p>
+              </div>
+            </div>
+
+            <p className="text-xs text-zinc-600 leading-relaxed">
+              Are you sure you want to delete <strong className="text-zinc-900">{itemToDelete.name}</strong>? This will remove it from the campus feed.
+            </p>
+
+            <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-xs">
+              ⚠️ You cannot delete items while units are actively checked out or have pending peer transfers.
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-zinc-100">
+              <button
+                type="button"
+                onClick={() => setItemToDelete(null)}
+                disabled={isDeleting}
+                className="px-4 py-2 rounded-xl text-xs font-semibold text-zinc-600 hover:text-zinc-900 hover:bg-zinc-100 transition"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmDelete}
+                disabled={isDeleting}
+                className="px-4 py-2 rounded-xl text-xs font-bold text-white bg-rose-600 hover:bg-rose-500 transition shadow-xs flex items-center gap-1.5 disabled:opacity-50"
+              >
+                {isDeleting ? 'Deleting...' : 'Delete Item'}
+              </button>
+            </div>
           </div>
         </div>
       )}

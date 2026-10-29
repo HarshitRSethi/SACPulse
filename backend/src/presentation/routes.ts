@@ -100,6 +100,7 @@ export function createApiRouter(): Router {
   router.post('/admin/users/:id/clear-defaulter', adminCtrl.clearDefaulter);
   router.post('/admin/users/:id/reset-cooldown', adminCtrl.resetCooldown);
   router.post('/admin/inventory', adminCtrl.upsertInventoryItem);
+  router.delete('/admin/inventory/:id', adminCtrl.deleteInventoryItem);
   router.get('/admin/users', adminCtrl.listUsers);
 
   return router;
