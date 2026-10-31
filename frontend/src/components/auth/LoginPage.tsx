@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { GoogleLogin, type CredentialResponse } from '@react-oauth/google';
 import type { User } from '../../types/index';
 import { api } from '../../services/api';
@@ -11,7 +12,11 @@ import {
   AlertCircle,
   Sparkles,
   ShieldCheck,
-  ChevronRight
+  ChevronRight,
+  ShieldAlert,
+  CheckCircle2,
+  X,
+  Send
 } from 'lucide-react';
 
 interface LoginPageProps {
@@ -22,6 +27,31 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
   const [isLoading, setIsLoading] = useState(false);
   const [loadingPreset, setLoadingPreset] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // Access Request Modal State for unwhitelisted non-IIITA accounts
+  const [accessRequest, setAccessRequest] = useState<{
+    isOpen: boolean;
+    email: string;
+    name: string;
+    isSubmitted: boolean;
+    status?: string;
+  } | null>(null);
+  const [requestMobileNo, setRequestMobileNo] = useState('');
+  const [requestReason, setRequestReason] = useState('');
+  const [isSubmittingRequest, setIsSubmittingRequest] = useState(false);
+  const [requestError, setRequestError] = useState<string | null>(null);
+
+  // Scroll lock when access request modal is open
+  useEffect(() => {
+    if (accessRequest?.isOpen) {
+      document.body.style.overflow = 'hidden';
+    } else {
+      document.body.style.overflow = '';
+    }
+    return () => {
+      document.body.style.overflow = '';
+    };
+  }, [accessRequest?.isOpen]);
 
   // Official Google OAuth Sign-In handler
   const handleGoogleSuccess = async (response: CredentialResponse) => {
@@ -42,7 +72,24 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
       onLoginSuccess(res.user, res.token, res.requiresMobileSetup);
     } catch (err: any) {
       console.error('Google Sign-In error:', err);
-      setError(err.message || 'Google authentication failed. Please verify your college account.');
+      // Catch access restriction for unwhitelisted non-IIITA emails
+      if (err.code === 'ACCESS_RESTRICTED' || err.message?.includes('Access restricted')) {
+        const email = err.userEmail || '';
+        const name = err.userName || '';
+        const isAlreadyPending = err.whitelistStatus === 'PENDING';
+        setAccessRequest({
+          isOpen: true,
+          email,
+          name,
+          isSubmitted: isAlreadyPending,
+          status: err.whitelistStatus
+        });
+        setRequestMobileNo('');
+        setRequestReason('');
+        setError(null);
+      } else {
+        setError(err.message || 'Google authentication failed. Please verify your college account.');
+      }
     } finally {
       setIsLoading(false);
     }
@@ -68,10 +115,54 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
       onLoginSuccess(res.user, res.token, res.requiresMobileSetup);
     } catch (err: any) {
       console.error('Login error:', err);
-      setError(err.message || 'Login failed. Please verify your email credentials.');
+      if (err.code === 'ACCESS_RESTRICTED' || err.message?.includes('Access restricted')) {
+        setAccessRequest({
+          isOpen: true,
+          email,
+          name: name || '',
+          isSubmitted: err.whitelistStatus === 'PENDING',
+          status: err.whitelistStatus
+        });
+        setRequestMobileNo('');
+        setRequestReason('');
+        setError(null);
+      } else {
+        setError(err.message || 'Login failed. Please verify your email credentials.');
+      }
     } finally {
       setIsLoading(false);
       setLoadingPreset(null);
+    }
+  };
+
+  const handleAccessRequestSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!accessRequest) return;
+
+    const cleanMobile = requestMobileNo.trim();
+    if (!/^[6-9]\d{9}$/.test(cleanMobile)) {
+      setRequestError('Please enter a valid 10-digit Indian calling number starting with 6, 7, 8, or 9.');
+      return;
+    }
+
+    try {
+      setIsSubmittingRequest(true);
+      setRequestError(null);
+      await api.requestWhitelist({
+        email: accessRequest.email,
+        name: accessRequest.name || accessRequest.email.split('@')[0],
+        mobileNo: cleanMobile,
+        reason: requestReason.trim() || undefined
+      });
+      setAccessRequest({
+        ...accessRequest,
+        isSubmitted: true
+      });
+    } catch (err: any) {
+      console.error('Failed to submit access request:', err);
+      setRequestError(err.message || 'Failed to submit access request. Please try again.');
+    } finally {
+      setIsSubmittingRequest(false);
     }
   };
 
@@ -316,6 +407,156 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
           </div>
         </div>
       </main>
+
+      {/* Access Restricted / Whitelist Request Modal */}
+      {accessRequest?.isOpen &&
+        createPortal(
+          <div
+            role="dialog"
+            aria-modal="true"
+            className="fixed inset-0 z-[999] bg-zinc-950/75 backdrop-blur-md overflow-y-auto flex items-center justify-center p-4 animate-in fade-in duration-200"
+          >
+            <div className="max-w-md w-full bg-white rounded-3xl shadow-2xl border border-zinc-200 p-6 sm:p-7 relative overflow-hidden transition-all">
+              {/* Decorative top bar */}
+              <div className="absolute top-0 left-0 right-0 h-1.5 bg-gradient-to-r from-amber-500 via-orange-500 to-amber-600" />
+
+              {/* Close Button */}
+              <button
+                onClick={() => setAccessRequest(null)}
+                className="absolute top-4 right-4 p-1.5 rounded-full hover:bg-zinc-100 text-zinc-400 hover:text-zinc-600 transition"
+              >
+                <X className="w-4 h-4" />
+              </button>
+
+              {/* Header */}
+              <div className="flex items-start gap-4 mb-5">
+                <div className="w-12 h-12 rounded-2xl bg-amber-50 border border-amber-200 flex items-center justify-center text-amber-600 shrink-0 shadow-sm">
+                  <ShieldAlert className="w-6 h-6" />
+                </div>
+                <div>
+                  <span className="text-[11px] font-mono font-bold tracking-wider uppercase text-amber-700 bg-amber-50 px-2 py-0.5 rounded-md border border-amber-200 inline-block mb-1">
+                    Access Restricted
+                  </span>
+                  <h2 className="text-xl font-extrabold text-zinc-900 tracking-tight">
+                    Account Not Authorized
+                  </h2>
+                  <p className="text-xs text-zinc-500 mt-1 leading-relaxed">
+                    <strong className="text-zinc-800">{accessRequest.email}</strong> is not authorized yet. Non-IIITA college emails require SAC Admin approval.
+                  </p>
+                </div>
+              </div>
+
+              {/* Submitted Confirmation State */}
+              {accessRequest.isSubmitted ? (
+                <div className="space-y-4">
+                  <div className="p-4 rounded-2xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs space-y-2">
+                    <div className="flex items-center gap-2 font-bold text-sm text-emerald-900">
+                      <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
+                      Request Under Review
+                    </div>
+                    <p className="leading-relaxed">
+                      Your request has been submitted to the SAC Admin for review. Once approved, you can sign in with your Google account.
+                    </p>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => setAccessRequest(null)}
+                    className="w-full py-3 px-4 rounded-2xl bg-zinc-900 hover:bg-black text-white font-bold text-xs shadow transition"
+                  >
+                    Close Window
+                  </button>
+                </div>
+              ) : (
+                /* Access Request Form */
+                <form onSubmit={handleAccessRequestSubmit} className="space-y-4">
+                  {requestError && (
+                    <div className="p-3 rounded-2xl bg-red-50 border border-red-200 text-red-700 text-xs flex items-start gap-2">
+                      <AlertCircle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
+                      <span>{requestError}</span>
+                    </div>
+                  )}
+
+                  <div>
+                    <label className="block text-xs font-bold text-zinc-700 uppercase tracking-wider mb-1">
+                      Full Name
+                    </label>
+                    <input
+                      type="text"
+                      value={accessRequest.name}
+                      onChange={(e) =>
+                        setAccessRequest({ ...accessRequest, name: e.target.value })
+                      }
+                      placeholder="e.g. Ramesh Guard / Guest Student"
+                      required
+                      className="w-full px-3.5 py-2.5 rounded-xl border border-zinc-300 text-xs focus:outline-none focus:ring-2 focus:ring-amber-500"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-zinc-700 uppercase tracking-wider mb-1">
+                      10-Digit Calling Number
+                    </label>
+                    <div className="flex items-center rounded-xl border border-zinc-300 bg-white focus-within:border-amber-600 focus-within:ring-2 focus-within:ring-amber-100 overflow-hidden shadow-xs">
+                      <span className="px-3 py-2.5 bg-zinc-100 border-r border-zinc-200 text-zinc-700 font-mono font-bold text-xs select-none">
+                        +91
+                      </span>
+                      <input
+                        type="tel"
+                        value={requestMobileNo}
+                        onChange={(e) =>
+                          setRequestMobileNo(
+                            e.target.value.replace(/\D/g, '').slice(0, 10)
+                          )
+                        }
+                        placeholder="9876543210"
+                        maxLength={10}
+                        required
+                        className="w-full px-3 py-2 text-sm font-mono font-semibold text-zinc-900 focus:outline-none"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-zinc-700 uppercase tracking-wider mb-1">
+                      Role / Reason for Access
+                    </label>
+                    <textarea
+                      value={requestReason}
+                      onChange={(e) => setRequestReason(e.target.value)}
+                      placeholder="e.g. SAC Guard (Night Shift Desk), Visiting Exchange Student, etc."
+                      rows={2}
+                      className="w-full px-3.5 py-2.5 rounded-xl border border-zinc-300 text-xs focus:outline-none focus:ring-2 focus:ring-amber-500"
+                    />
+                  </div>
+
+                  <div className="flex items-center gap-3 pt-2">
+                    <button
+                      type="button"
+                      onClick={() => setAccessRequest(null)}
+                      className="flex-1 py-3 px-4 rounded-2xl border border-zinc-300 hover:bg-zinc-100 text-zinc-700 font-bold text-xs transition"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={isSubmittingRequest || requestMobileNo.length < 10}
+                      className="flex-1 py-3 px-4 rounded-2xl bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs shadow-md transition disabled:opacity-50 flex items-center justify-center gap-1.5"
+                    >
+                      {isSubmittingRequest ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin text-white" />
+                      ) : (
+                        <Send className="w-3.5 h-3.5 text-white" />
+                      )}
+                      <span>Submit Request</span>
+                    </button>
+                  </div>
+                </form>
+              )}
+            </div>
+          </div>,
+          document.body
+        )}
 
       {/* Footer */}
       <footer className="border-t border-zinc-200 bg-white py-4 px-6 text-center text-xs text-zinc-400 font-mono">

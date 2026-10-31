@@ -56,8 +56,115 @@ export const api = {
       body: JSON.stringify(payload)
     });
     const json = await res.json();
-    if (!json.success) throw new Error(json.error || 'Failed to authenticate');
+    if (!json.success) {
+      const err: any = new Error(json.error || 'Failed to authenticate');
+      err.code = json.code;
+      err.whitelistStatus = json.whitelistStatus;
+      err.userEmail = json.userEmail;
+      err.userName = json.userName;
+      throw err;
+    }
     return json.data;
+  },
+
+  // Whitelist Request & Status
+  async requestWhitelist(payload: {
+    email: string;
+    name: string;
+    mobileNo: string;
+    reason?: string;
+  }): Promise<any> {
+    const res = await fetch(`${API_BASE}/auth/request-whitelist`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    const json = await res.json();
+    if (!json.success) throw new Error(json.error || 'Failed to submit whitelist request');
+    return json;
+  },
+
+  async getWhitelistStatus(email: string): Promise<any> {
+    const res = await fetch(`${API_BASE}/auth/whitelist-status?email=${encodeURIComponent(email)}`);
+    const json = await res.json();
+    if (!json.success) throw new Error(json.error || 'Failed to fetch whitelist status');
+    return json.data;
+  },
+
+  // Admin Whitelist Management
+  async getAdminWhitelist(): Promise<{ pendingRequests: any[]; activeUsers: any[]; initialAdminEmail?: string }> {
+    const token = authStorage.getToken();
+    const headers: Record<string, string> = {};
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+
+    const res = await fetch(`${API_BASE}/admin/whitelist`, { headers });
+    const json = await res.json();
+    if (!json.success) throw new Error(json.error || 'Failed to fetch whitelist data');
+    return json.data;
+  },
+
+  async approveWhitelist(requestId: string, role: 'STUDENT' | 'GUARD' | 'ADMIN'): Promise<any> {
+    const token = authStorage.getToken();
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+
+    const res = await fetch(`${API_BASE}/admin/whitelist/approve`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ requestId, role })
+    });
+    const json = await res.json();
+    if (!json.success) throw new Error(json.error || 'Failed to approve whitelist request');
+    return json;
+  },
+
+  async rejectWhitelist(requestId: string): Promise<any> {
+    const token = authStorage.getToken();
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+
+    const res = await fetch(`${API_BASE}/admin/whitelist/reject`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ requestId })
+    });
+    const json = await res.json();
+    if (!json.success) throw new Error(json.error || 'Failed to reject whitelist request');
+    return json;
+  },
+
+  async directAddWhitelist(payload: {
+    email: string;
+    name: string;
+    mobileNo?: string;
+    role: 'STUDENT' | 'GUARD' | 'ADMIN';
+  }): Promise<any> {
+    const token = authStorage.getToken();
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+
+    const res = await fetch(`${API_BASE}/admin/whitelist/direct-add`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(payload)
+    });
+    const json = await res.json();
+    if (!json.success) throw new Error(json.error || 'Failed to add user to whitelist');
+    return json;
+  },
+
+  async revokeWhitelist(id: string): Promise<any> {
+    const token = authStorage.getToken();
+    const headers: Record<string, string> = {};
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+
+    const res = await fetch(`${API_BASE}/admin/whitelist/${id}`, {
+      method: 'DELETE',
+      headers
+    });
+    const json = await res.json();
+    if (!json.success) throw new Error(json.error || 'Failed to revoke whitelist access');
+    return json;
   },
 
   async submitMobileSetup(

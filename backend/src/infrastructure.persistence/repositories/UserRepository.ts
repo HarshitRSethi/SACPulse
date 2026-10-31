@@ -229,4 +229,218 @@ export class UserRepository {
     }
     return this.mapRowToEntity(data);
   }
+
+  // ==========================================
+  // Whitelist Requests & Whitelisted Staff
+  // ==========================================
+
+  public async createWhitelistRequest(data: {
+    email: string;
+    name: string;
+    mobileNo: string;
+    reason?: string;
+  }): Promise<any> {
+    const supabase = this.db.getSupabase();
+    if (!supabase) throw new Error('Supabase client is not initialized.');
+
+    const cleanEmail = data.email.toLowerCase().trim();
+    const { data: result, error } = await supabase
+      .from('whitelist_requests')
+      .upsert(
+        {
+          email: cleanEmail,
+          name: data.name.trim(),
+          mobile_no: data.mobileNo.trim(),
+          reason: data.reason?.trim() || null,
+          status: 'PENDING',
+          approved_role: null,
+          created_at: new Date().toISOString()
+        },
+        { onConflict: 'email' }
+      )
+      .select('*')
+      .single();
+
+    if (error) {
+      throw new Error(`Failed to create whitelist request: ${error.message}`);
+    }
+    return result;
+  }
+
+  public async findWhitelistRequestByEmail(email: string): Promise<any | null> {
+    const supabase = this.db.getSupabase();
+    if (!supabase) throw new Error('Supabase client is not initialized.');
+
+    const { data, error } = await supabase
+      .from('whitelist_requests')
+      .select('*')
+      .ilike('email', email.toLowerCase().trim())
+      .maybeSingle();
+
+    if (error) {
+      throw new Error(`Failed to query whitelist request for ${email}: ${error.message}`);
+    }
+    return data || null;
+  }
+
+  public async findWhitelistRequestById(id: string): Promise<any | null> {
+    const supabase = this.db.getSupabase();
+    if (!supabase) throw new Error('Supabase client is not initialized.');
+
+    const { data, error } = await supabase
+      .from('whitelist_requests')
+      .select('*')
+      .eq('id', id)
+      .maybeSingle();
+
+    if (error) {
+      throw new Error(`Failed to query whitelist request ${id}: ${error.message}`);
+    }
+    return data || null;
+  }
+
+  public async listPendingWhitelistRequests(): Promise<any[]> {
+    const supabase = this.db.getSupabase();
+    if (!supabase) throw new Error('Supabase client is not initialized.');
+
+    const { data, error } = await supabase
+      .from('whitelist_requests')
+      .select('*')
+      .eq('status', 'PENDING')
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      throw new Error(`Failed to list pending whitelist requests: ${error.message}`);
+    }
+    return data || [];
+  }
+
+  public async updateWhitelistRequestStatus(
+    id: string,
+    status: 'APPROVED' | 'REJECTED',
+    approvedRole?: string
+  ): Promise<any> {
+    const supabase = this.db.getSupabase();
+    if (!supabase) throw new Error('Supabase client is not initialized.');
+
+    const updatePayload: any = { status };
+    if (approvedRole !== undefined) {
+      updatePayload.approved_role = approvedRole;
+    }
+
+    const { data, error } = await supabase
+      .from('whitelist_requests')
+      .update(updatePayload)
+      .eq('id', id)
+      .select('*')
+      .single();
+
+    if (error) {
+      throw new Error(`Failed to update whitelist request status: ${error.message}`);
+    }
+    return data;
+  }
+
+  public async listWhitelistedStaff(): Promise<any[]> {
+    const supabase = this.db.getSupabase();
+    if (!supabase) throw new Error('Supabase client is not initialized.');
+
+    const { data, error } = await supabase
+      .from('whitelisted_staff')
+      .select('*')
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      throw new Error(`Failed to list whitelisted staff: ${error.message}`);
+    }
+    return data || [];
+  }
+
+  public async addWhitelistedStaff(data: {
+    email: string;
+    name: string;
+    mobileNo?: string | null;
+    role: UserRole;
+  }): Promise<any> {
+    const supabase = this.db.getSupabase();
+    if (!supabase) throw new Error('Supabase client is not initialized.');
+
+    const cleanEmail = data.email.toLowerCase().trim();
+    const { data: result, error } = await supabase
+      .from('whitelisted_staff')
+      .upsert(
+        {
+          email: cleanEmail,
+          name: data.name.trim(),
+          mobile_no: data.mobileNo?.trim() || null,
+          role: data.role
+        },
+        { onConflict: 'email' }
+      )
+      .select('*')
+      .single();
+
+    if (error) {
+      throw new Error(`Failed to add whitelisted staff: ${error.message}`);
+    }
+    return result;
+  }
+
+  public async findWhitelistedStaffById(id: string): Promise<any | null> {
+    const supabase = this.db.getSupabase();
+    if (!supabase) throw new Error('Supabase client is not initialized.');
+
+    const { data, error } = await supabase
+      .from('whitelisted_staff')
+      .select('*')
+      .eq('id', id)
+      .maybeSingle();
+
+    if (error) {
+      throw new Error(`Failed to query whitelisted staff by id ${id}: ${error.message}`);
+    }
+    return data || null;
+  }
+
+  public async removeWhitelistedStaff(id: string): Promise<void> {
+    const supabase = this.db.getSupabase();
+    if (!supabase) throw new Error('Supabase client is not initialized.');
+
+    const { error } = await supabase
+      .from('whitelisted_staff')
+      .delete()
+      .eq('id', id);
+
+    if (error) {
+      throw new Error(`Failed to remove whitelisted staff ${id}: ${error.message}`);
+    }
+  }
+
+  public async upsertUser(userData: {
+    email: string;
+    name: string;
+    role: UserRole;
+    mobileNo?: string | null;
+    rollNo?: string | null;
+  }): Promise<User> {
+    const cleanEmail = userData.email.toLowerCase().trim();
+    let existing = await this.findByEmail(cleanEmail);
+    if (existing) {
+      existing = await this.updateUser(existing.getId(), {
+        name: userData.name,
+        role: userData.role,
+        mobileNo: userData.mobileNo !== undefined ? userData.mobileNo : existing.getMobileNo(),
+        rollNo: userData.rollNo !== undefined ? userData.rollNo : (existing instanceof Student ? existing.getRollNo() : null)
+      });
+      return existing;
+    } else {
+      return this.createUser({
+        email: cleanEmail,
+        name: userData.name,
+        role: userData.role,
+        mobileNo: userData.mobileNo,
+        rollNo: userData.rollNo
+      });
+    }
+  }
 }

@@ -11,6 +11,7 @@ export interface User {
   penaltyUntil?: string | null;
   dashboardRoute?: string;
   requiresMobileSetup?: boolean;
+  isRootAdmin?: boolean;
 }
 
 export type ItemType = 'EQUIPMENT' | 'ROOM_KEY';

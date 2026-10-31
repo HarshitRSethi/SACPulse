@@ -19,7 +19,12 @@ import {
   Tag,
   ChevronLeft,
   ChevronRight,
-  Trash2
+  Trash2,
+  UserPlus,
+  UserCheck,
+  Phone,
+  Shield,
+  X
 } from 'lucide-react';
 
 interface AdminDashboardProps {
@@ -27,7 +32,7 @@ interface AdminDashboardProps {
 }
 
 export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentUser }) => {
-  const [activeTab, setActiveTab] = useState<'register' | 'defaulters' | 'inventory'>('register');
+  const [activeTab, setActiveTab] = useState<'register' | 'defaulters' | 'inventory' | 'whitelist'>('register');
   const [registerLogs, setRegisterLogs] = useState<any[]>([]);
   const [statusFilter, setStatusFilter] = useState<string>('ALL');
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -44,6 +49,22 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentUser }) =
   const [actionMessage, setActionMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [itemToDelete, setItemToDelete] = useState<SACItem | null>(null);
   const [isDeleting, setIsDeleting] = useState<boolean>(false);
+
+  // Whitelist state
+  const [pendingRequests, setPendingRequests] = useState<any[]>([]);
+  const [activeWhitelistedUsers, setActiveWhitelistedUsers] = useState<any[]>([]);
+  const [initialAdminEmail, setInitialAdminEmail] = useState<string>('');
+  const [whitelistActionLoading, setWhitelistActionLoading] = useState<string | null>(null);
+  const [directEmail, setDirectEmail] = useState('');
+  const [directName, setDirectName] = useState('');
+  const [directMobile, setDirectMobile] = useState('');
+  const [directRole, setDirectRole] = useState<'STUDENT' | 'GUARD' | 'ADMIN'>('GUARD');
+  const [isDirectAdding, setIsDirectAdding] = useState(false);
+
+  const isRootAdmin = Boolean(
+    currentUser.isRootAdmin ||
+    (initialAdminEmail && currentUser.email.toLowerCase().trim() === initialAdminEmail.toLowerCase().trim())
+  );
 
   // New Item form state with dynamic and custom category creation
   const [newItemName, setNewItemName] = useState('');
@@ -76,11 +97,96 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentUser }) =
       setCurrentPage(logsRes.currentPage);
       setUsers(usersData);
       setInventory(invData);
+      await loadWhitelist();
     } catch (err: any) {
       console.error('Failed to load admin console data:', err);
       setActionMessage({ type: 'error', text: err.message || 'Failed to fetch logs' });
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const loadWhitelist = async () => {
+    try {
+      const res = await api.getAdminWhitelist();
+      setPendingRequests(res.pendingRequests || []);
+      setActiveWhitelistedUsers(res.activeUsers || []);
+      if (res.initialAdminEmail) {
+        setInitialAdminEmail(res.initialAdminEmail);
+      }
+    } catch (err: any) {
+      console.warn('Failed to load whitelist data:', err);
+    }
+  };
+
+  const handleApproveWhitelist = async (requestId: string, role: 'STUDENT' | 'GUARD' | 'ADMIN') => {
+    try {
+      setWhitelistActionLoading(requestId);
+      setActionMessage(null);
+      await api.approveWhitelist(requestId, role);
+      setActionMessage({ type: 'success', text: `Access request approved as ${role}.` });
+      await Promise.all([loadWhitelist(), loadData()]);
+    } catch (err: any) {
+      console.error('Failed to approve whitelist request:', err);
+      setActionMessage({ type: 'error', text: err.message || 'Failed to approve request' });
+    } finally {
+      setWhitelistActionLoading(null);
+    }
+  };
+
+  const handleRejectWhitelist = async (requestId: string) => {
+    try {
+      setWhitelistActionLoading(requestId);
+      setActionMessage(null);
+      await api.rejectWhitelist(requestId);
+      setActionMessage({ type: 'success', text: 'Access request rejected.' });
+      await loadWhitelist();
+    } catch (err: any) {
+      console.error('Failed to reject whitelist request:', err);
+      setActionMessage({ type: 'error', text: err.message || 'Failed to reject request' });
+    } finally {
+      setWhitelistActionLoading(null);
+    }
+  };
+
+  const handleDirectAddWhitelist = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!directEmail.trim() || !directName.trim()) return;
+
+    try {
+      setIsDirectAdding(true);
+      setActionMessage(null);
+      await api.directAddWhitelist({
+        email: directEmail.trim(),
+        name: directName.trim(),
+        mobileNo: directMobile.trim() || undefined,
+        role: directRole
+      });
+      setDirectEmail('');
+      setDirectName('');
+      setDirectMobile('');
+      setActionMessage({ type: 'success', text: `Added ${directEmail} to whitelist as ${directRole}.` });
+      await Promise.all([loadWhitelist(), loadData()]);
+    } catch (err: any) {
+      console.error('Failed to direct add to whitelist:', err);
+      setActionMessage({ type: 'error', text: err.message || 'Failed to add user' });
+    } finally {
+      setIsDirectAdding(false);
+    }
+  };
+
+  const handleRevokeWhitelist = async (id: string) => {
+    try {
+      setWhitelistActionLoading(id);
+      setActionMessage(null);
+      await api.revokeWhitelist(id);
+      setActionMessage({ type: 'success', text: 'Whitelist access revoked successfully.' });
+      await Promise.all([loadWhitelist(), loadData()]);
+    } catch (err: any) {
+      console.error('Failed to revoke whitelist access:', err);
+      setActionMessage({ type: 'error', text: err.message || 'Failed to revoke access' });
+    } finally {
+      setWhitelistActionLoading(null);
     }
   };
 
@@ -353,6 +459,21 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentUser }) =
             }`}
           >
             Inventory Manager
+          </button>
+          <button
+            onClick={() => setActiveTab('whitelist')}
+            className={`px-3.5 py-1.5 rounded-xl text-xs font-semibold transition flex items-center gap-1.5 ${
+              activeTab === 'whitelist'
+                ? 'bg-white text-zinc-900 shadow-xs'
+                : 'text-zinc-600 hover:text-zinc-900'
+            }`}
+          >
+            <span>Staff & Access Whitelist</span>
+            {pendingRequests.length > 0 && (
+              <span className="px-1.5 py-0.2 rounded-full bg-blue-600 text-white text-[10px] font-bold">
+                {pendingRequests.length}
+              </span>
+            )}
           </button>
         </div>
       </div>
@@ -977,6 +1098,345 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentUser }) =
                 </div>
               </div>
             ))}
+          </div>
+        </div>
+      )}
+
+      {/* Tab: Staff & Access Whitelist */}
+      {activeTab === 'whitelist' && (
+        <div className="space-y-8 animate-in fade-in duration-150">
+          {/* Section A — Pending Access Requests */}
+          <div className="bg-white border border-[#E4E4E7] rounded-3xl p-6 shadow-xs space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-zinc-100">
+              <div className="flex items-center gap-2.5">
+                <span className="p-2 rounded-xl bg-amber-50 text-amber-700 border border-amber-200">
+                  <ShieldAlert className="w-5 h-5" />
+                </span>
+                <div>
+                  <h2 className="text-base font-bold text-zinc-900">
+                    Section A — Pending Access Requests
+                  </h2>
+                  <p className="text-xs text-zinc-500">
+                    Non-IIITA accounts waiting for administrative role authorization
+                  </p>
+                </div>
+              </div>
+              <span className="px-2.5 py-1 rounded-full bg-amber-100 text-amber-800 font-mono font-bold text-xs">
+                {pendingRequests.length} Pending
+              </span>
+            </div>
+
+            {pendingRequests.length === 0 ? (
+              <div className="p-8 text-center bg-zinc-50 rounded-2xl border border-dashed border-zinc-200 text-zinc-400 text-xs">
+                <CheckCircle2 className="w-8 h-8 text-emerald-500 mx-auto mb-2 opacity-80" />
+                <p className="font-semibold text-zinc-700">No pending access requests</p>
+                <p className="text-zinc-400 mt-0.5">All external account requests have been processed.</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {pendingRequests.map((req) => (
+                  <div
+                    key={req.id}
+                    className="p-5 rounded-2xl border border-zinc-200 bg-zinc-50/60 hover:bg-white transition shadow-xs flex flex-col justify-between space-y-4"
+                  >
+                    <div className="space-y-2">
+                      <div className="flex items-start justify-between gap-2">
+                        <div>
+                          <h3 className="font-bold text-zinc-900 text-sm">{req.name}</h3>
+                          <span className="text-xs font-mono text-zinc-500 block">{req.email}</span>
+                        </div>
+                        <span className="px-2 py-0.5 rounded-md bg-amber-50 border border-amber-200 text-amber-700 text-[10px] font-bold uppercase">
+                          Pending
+                        </span>
+                      </div>
+
+                      <div className="flex items-center gap-2 text-xs">
+                        <span className="text-zinc-400">Mobile:</span>
+                        <a
+                          href={`tel:${req.mobile_no}`}
+                          className="font-mono font-bold text-blue-600 hover:underline flex items-center gap-1"
+                        >
+                          <Phone className="w-3 h-3" />
+                          +91 {req.mobile_no}
+                        </a>
+                      </div>
+
+                      {req.reason && (
+                        <div className="p-2.5 rounded-xl bg-white border border-zinc-200/80 text-xs text-zinc-600">
+                          <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider block mb-0.5">
+                            Reason / Context:
+                          </span>
+                          <p className="italic">&ldquo;{req.reason}&rdquo;</p>
+                        </div>
+                      )}
+
+                      <span className="text-[10px] font-mono text-zinc-400 block">
+                        Requested on: {formatTimestamp(req.created_at)}
+                      </span>
+                    </div>
+
+                    {/* 4 Action Buttons */}
+                    <div className="pt-3 border-t border-zinc-200/70 grid grid-cols-2 sm:grid-cols-4 gap-2">
+                      <button
+                        onClick={() => handleApproveWhitelist(req.id, 'STUDENT')}
+                        disabled={whitelistActionLoading === req.id}
+                        className="px-2.5 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-[11px] shadow-xs transition flex items-center justify-center gap-1 active:scale-95 disabled:opacity-50"
+                      >
+                        <UserCheck className="w-3 h-3" />
+                        <span>STUDENT</span>
+                      </button>
+                      <button
+                        onClick={() => handleApproveWhitelist(req.id, 'GUARD')}
+                        disabled={whitelistActionLoading === req.id}
+                        className="px-2.5 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-bold text-[11px] shadow-xs transition flex items-center justify-center gap-1 active:scale-95 disabled:opacity-50"
+                      >
+                        <Shield className="w-3 h-3" />
+                        <span>GUARD</span>
+                      </button>
+                      {isRootAdmin ? (
+                        <button
+                          onClick={() => handleApproveWhitelist(req.id, 'ADMIN')}
+                          disabled={whitelistActionLoading === req.id}
+                          className="px-2.5 py-2 rounded-xl bg-purple-600 hover:bg-purple-700 text-white font-bold text-[11px] shadow-xs transition flex items-center justify-center gap-1 active:scale-95 disabled:opacity-50"
+                        >
+                          <Award className="w-3 h-3" />
+                          <span>ADMIN</span>
+                        </button>
+                      ) : (
+                        <button
+                          disabled
+                          title="Only the Primary Super Admin can grant ADMIN role"
+                          className="px-2.5 py-2 rounded-xl bg-zinc-100 text-zinc-400 border border-zinc-200 font-bold text-[11px] transition flex items-center justify-center gap-1 cursor-not-allowed opacity-60"
+                        >
+                          <Award className="w-3 h-3" />
+                          <span>ADMIN 🔒</span>
+                        </button>
+                      )}
+                      <button
+                        onClick={() => handleRejectWhitelist(req.id)}
+                        disabled={whitelistActionLoading === req.id}
+                        className="px-2.5 py-2 rounded-xl bg-zinc-100 hover:bg-zinc-200 text-zinc-700 border border-zinc-300 font-bold text-[11px] transition flex items-center justify-center gap-1 active:scale-95 disabled:opacity-50"
+                      >
+                        <X className="w-3 h-3" />
+                        <span>Reject</span>
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Section B — Direct Add Form */}
+          <div className="bg-white border border-[#E4E4E7] rounded-3xl p-6 shadow-xs space-y-4">
+            <div className="flex items-center gap-2.5 pb-3 border-b border-zinc-100">
+              <span className="p-2 rounded-xl bg-blue-50 text-blue-700 border border-blue-200">
+                <UserPlus className="w-5 h-5" />
+              </span>
+              <div>
+                <h2 className="text-base font-bold text-zinc-900">
+                  Section B — Direct Add to Whitelist
+                </h2>
+                <p className="text-xs text-zinc-500">
+                  Authorize a guard, external faculty, or visiting scholar before their first Google sign-in
+                </p>
+              </div>
+            </div>
+
+            <form onSubmit={handleDirectAddWhitelist} className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 items-end">
+              <div>
+                <label className="block text-[11px] font-bold text-zinc-600 uppercase mb-1">Email Address</label>
+                <input
+                  type="email"
+                  value={directEmail}
+                  onChange={(e) => setDirectEmail(e.target.value)}
+                  placeholder="e.g. guard.duty@gmail.com"
+                  required
+                  className="w-full px-3 py-2 rounded-xl border border-zinc-300 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-bold text-zinc-600 uppercase mb-1">Full Name</label>
+                <input
+                  type="text"
+                  value={directName}
+                  onChange={(e) => setDirectName(e.target.value)}
+                  placeholder="e.g. Ramesh Kumar"
+                  required
+                  className="w-full px-3 py-2 rounded-xl border border-zinc-300 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-bold text-zinc-600 uppercase mb-1">Mobile (+91)</label>
+                <input
+                  type="tel"
+                  value={directMobile}
+                  onChange={(e) => setDirectMobile(e.target.value.replace(/\D/g, '').slice(0, 10))}
+                  placeholder="9876543210"
+                  maxLength={10}
+                  className="w-full px-3 py-2 rounded-xl border border-zinc-300 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-bold text-zinc-600 uppercase mb-1">Authorized Role</label>
+                <select
+                  value={directRole}
+                  onChange={(e) => setDirectRole(e.target.value as any)}
+                  className="w-full px-3 py-2 rounded-xl border border-zinc-300 text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                >
+                  <option value="GUARD">SAC GUARD (Desk)</option>
+                  <option value="STUDENT">STUDENT (Borrower)</option>
+                  {isRootAdmin ? (
+                    <option value="ADMIN">SAC ADMIN (Governance)</option>
+                  ) : (
+                    <option value="ADMIN" disabled>SAC ADMIN (Root Admin only 🔒)</option>
+                  )}
+                </select>
+              </div>
+
+              <button
+                type="submit"
+                disabled={isDirectAdding || !directEmail.trim() || !directName.trim()}
+                className="w-full py-2.5 px-4 rounded-xl bg-zinc-900 hover:bg-black text-white font-bold text-xs shadow-xs transition flex items-center justify-center gap-1.5 disabled:opacity-50"
+              >
+                {isDirectAdding ? (
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Plus className="w-3.5 h-3.5" />
+                )}
+                <span>Add to Whitelist</span>
+              </button>
+            </form>
+          </div>
+
+          {/* Section C — Active Whitelisted Accounts */}
+          <div className="bg-white border border-[#E4E4E7] rounded-3xl p-6 shadow-xs space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-zinc-100">
+              <div className="flex items-center gap-2.5">
+                <span className="p-2 rounded-xl bg-emerald-50 text-emerald-700 border border-emerald-200">
+                  <ShieldCheck className="w-5 h-5" />
+                </span>
+                <div>
+                  <h2 className="text-base font-bold text-zinc-900">
+                    Section C — Active Whitelisted Accounts
+                  </h2>
+                  <p className="text-xs text-zinc-500">
+                    All non-IIITA accounts granted access to SACPulse
+                  </p>
+                </div>
+              </div>
+              <span className="px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-800 font-mono font-bold text-xs">
+                {activeWhitelistedUsers.length} Active
+              </span>
+            </div>
+
+            {activeWhitelistedUsers.length === 0 ? (
+              <p className="text-xs text-zinc-400 py-4 text-center">No active whitelisted accounts.</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs border-collapse">
+                  <thead>
+                    <tr className="border-b border-zinc-200 text-zinc-400 uppercase tracking-wider text-[10px]">
+                      <th className="py-2.5 px-3">Name / Email</th>
+                      <th className="py-2.5 px-3">Role</th>
+                      <th className="py-2.5 px-3">Mobile</th>
+                      <th className="py-2.5 px-3">Added Date</th>
+                      <th className="py-2.5 px-3 text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-zinc-100">
+                    {activeWhitelistedUsers.map((item) => (
+                      <tr key={item.id} className="hover:bg-zinc-50 transition">
+                        <td className="py-3 px-3">
+                          <span className="font-bold text-zinc-900 block">{item.name}</span>
+                          <span className="text-[11px] font-mono text-zinc-500">{item.email}</span>
+                        </td>
+                        <td className="py-3 px-3">
+                          <span
+                            className={`px-2 py-0.5 rounded-md font-mono text-[10px] font-bold ${
+                              item.role === 'ADMIN'
+                                ? 'bg-purple-50 text-purple-700 border border-purple-200'
+                                : item.role === 'GUARD'
+                                ? 'bg-amber-50 text-amber-700 border border-amber-200'
+                                : 'bg-blue-50 text-blue-700 border border-blue-200'
+                            }`}
+                          >
+                            {item.role}
+                          </span>
+                        </td>
+                        <td className="py-3 px-3 font-mono">
+                          {item.mobile_no ? (
+                            <a
+                              href={`tel:${item.mobile_no}`}
+                              className="text-blue-600 hover:underline flex items-center gap-1"
+                            >
+                              <Phone className="w-3 h-3" />
+                              {item.mobile_no}
+                            </a>
+                          ) : (
+                            <span className="text-zinc-400">—</span>
+                          )}
+                        </td>
+                        <td className="py-3 px-3 text-zinc-400 font-mono text-[11px]">
+                          {formatTimestamp(item.created_at)}
+                        </td>
+                        <td className="py-3 px-3 text-right">
+                          {(() => {
+                            const isCurrentAccount = item.email?.toLowerCase().trim() === currentUser.email?.toLowerCase().trim();
+                            const isPrimaryRoot = Boolean(initialAdminEmail && item.email?.toLowerCase().trim() === initialAdminEmail.toLowerCase().trim());
+                            const isTargetAdmin = item.role === 'ADMIN';
+
+                            if (isPrimaryRoot) {
+                              return (
+                                <span className="px-2.5 py-1 rounded-xl bg-purple-50 border border-purple-200 text-purple-700 font-bold text-[10px] inline-flex items-center gap-1">
+                                  <Award className="w-3 h-3" />
+                                  <span>Super Admin</span>
+                                </span>
+                              );
+                            }
+
+                            if (isCurrentAccount) {
+                              return (
+                                <span className="px-2.5 py-1 rounded-xl bg-zinc-100 border border-zinc-200 text-zinc-600 font-bold text-[10px] inline-flex items-center gap-1">
+                                  <ShieldCheck className="w-3 h-3 text-emerald-600" />
+                                  <span>Current Session</span>
+                                </span>
+                              );
+                            }
+
+                            if (isTargetAdmin && !isRootAdmin) {
+                              return (
+                                <span
+                                  title="Only the Primary Super Admin can revoke an ADMIN account"
+                                  className="px-2.5 py-1 rounded-xl bg-zinc-50 border border-zinc-200 text-zinc-400 font-semibold text-[10px] inline-flex items-center gap-1 cursor-not-allowed"
+                                >
+                                  <Award className="w-3 h-3" />
+                                  <span>Root Admin Only 🔒</span>
+                                </span>
+                              );
+                            }
+
+                            return (
+                              <button
+                                onClick={() => handleRevokeWhitelist(item.id)}
+                                disabled={whitelistActionLoading === item.id}
+                                className="px-2.5 py-1.5 rounded-xl border border-rose-200 bg-rose-50 hover:bg-rose-100 text-rose-700 font-bold text-[11px] transition active:scale-95 inline-flex items-center gap-1 disabled:opacity-50"
+                              >
+                                <Trash2 className="w-3 h-3" />
+                                <span>Revoke Access</span>
+                              </button>
+                            );
+                          })()}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
         </div>
       )}

@@ -68,6 +68,9 @@ export class AuthController extends BaseController {
     const mobileNo = user.getMobileNo();
     const requiresMobileSetup = isStudent ? (mobileNo === null || mobileNo === '') : (mobileNo === null);
 
+    const initialAdminEmail = (process.env.INITIAL_ADMIN_EMAIL || '').toLowerCase().trim();
+    const isRootAdmin = Boolean(initialAdminEmail && user.getEmail().toLowerCase().trim() === initialAdminEmail);
+
     return {
       id: user.getId(),
       name: user.getName(),
@@ -78,7 +81,8 @@ export class AuthController extends BaseController {
       isDefaulter: student ? student.getIsDefaulter() : false,
       penaltyUntil: student && student.getPenaltyUntil() ? student.getPenaltyUntil()!.toISOString() : null,
       dashboardRoute: user.getDashboardRoute(),
-      requiresMobileSetup
+      requiresMobileSetup,
+      isRootAdmin
     };
   }
 
@@ -163,6 +167,7 @@ export class AuthController extends BaseController {
       const isIiitaEmail = normalizedEmail.endsWith('@iiita.ac.in');
       let assignedRole: UserRole = 'STUDENT';
       let parsedRollNo: string | null = null;
+      let matchedStaff: any = null;
 
       if (isIiitaEmail) {
         // Rule 1: Extract roll_no from email prefix. Assign role = 'STUDENT' if new user.
@@ -171,10 +176,14 @@ export class AuthController extends BaseController {
         assignedRole = 'STUDENT';
       } else {
         // Rule 2: If email does NOT end with @iiita.ac.in, query whitelisted_staff table.
-        const staff = await this.userRepo.findWhitelistedStaff(normalizedEmail);
-        if (staff) {
-          const staffRole = (staff.role || 'GUARD').toUpperCase() as UserRole;
-          assignedRole = staffRole === 'ADMIN' ? 'ADMIN' : 'GUARD';
+        matchedStaff = await this.userRepo.findWhitelistedStaff(normalizedEmail);
+        if (matchedStaff) {
+          const staffRole = (matchedStaff.role || 'GUARD').toUpperCase() as UserRole;
+          if (staffRole === 'STUDENT' || staffRole === 'GUARD' || staffRole === 'ADMIN') {
+            assignedRole = staffRole;
+          } else {
+            assignedRole = 'GUARD';
+          }
         } else if (
           process.env.INITIAL_ADMIN_EMAIL &&
           normalizedEmail === process.env.INITIAL_ADMIN_EMAIL.toLowerCase().trim()
@@ -182,9 +191,14 @@ export class AuthController extends BaseController {
           assignedRole = 'ADMIN';
         } else {
           // Reject unwhitelisted external emails with 403 Forbidden
+          const pendingReq = await this.userRepo.findWhitelistRequestByEmail(normalizedEmail);
           return res.status(403).json({
             success: false,
-            error: 'Access restricted to @iiita.ac.in or whitelisted accounts'
+            error: 'Access restricted to @iiita.ac.in or whitelisted accounts',
+            code: 'ACCESS_RESTRICTED',
+            whitelistStatus: pendingReq ? pendingReq.status : 'NOT_REQUESTED',
+            userEmail: normalizedEmail,
+            userName: name || null
           });
         }
       }
@@ -209,13 +223,20 @@ export class AuthController extends BaseController {
           email: normalizedEmail,
           name: userName,
           role: assignedRole,
-          rollNo: isIiitaEmail ? parsedRollNo : null,
-          mobileNo: null
+          rollNo: isIiitaEmail ? parsedRollNo : (assignedRole === 'STUDENT' ? normalizedEmail.split('@')[0].toUpperCase() : null),
+          mobileNo: matchedStaff?.mobile_no || null
         });
       } else {
         // Update user role if assignedRole is ADMIN or whitelisted staff override
+        const updates: any = {};
         if (user.getRole() !== assignedRole && (assignedRole === 'ADMIN' || !isIiitaEmail)) {
-          user = await this.userRepo.updateUser(user.getId(), { role: assignedRole });
+          updates.role = assignedRole;
+        }
+        if (!user.getMobileNo() && matchedStaff?.mobile_no) {
+          updates.mobileNo = matchedStaff.mobile_no;
+        }
+        if (Object.keys(updates).length > 0) {
+          user = await this.userRepo.updateUser(user.getId(), updates);
         }
       }
 
@@ -309,6 +330,117 @@ export class AuthController extends BaseController {
         data: {
           ...userDto,
           user: userDto
+        }
+      });
+    } catch (err: any) {
+      return this.fail(res, err);
+    }
+  };
+
+  /**
+   * POST /api/auth/request-whitelist
+   * Public route receiving { email, name, mobileNo, reason }.
+   * Validates Indian 10-digit mobile (/^[6-9]\d{9}$/) and inserts/upserts a PENDING request.
+   */
+  public requestWhitelist = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const { email, name, mobileNo, reason } = req.body;
+
+      if (!email || typeof email !== 'string') {
+        return this.clientError(res, 'Email is required');
+      }
+
+      if (!name || typeof name !== 'string') {
+        return this.clientError(res, 'Name is required');
+      }
+
+      if (!mobileNo || typeof mobileNo !== 'string') {
+        return this.clientError(res, 'Mobile number is required');
+      }
+
+      const cleanMobile = mobileNo.trim();
+      if (!/^[6-9]\d{9}$/.test(cleanMobile)) {
+        return this.clientError(
+          res,
+          'Invalid mobile number. Please enter a valid 10-digit Indian calling number starting with 6, 7, 8, or 9.'
+        );
+      }
+
+      const cleanEmail = email.toLowerCase().trim();
+
+      // Check if already in whitelisted_staff
+      const existingStaff = await this.userRepo.findWhitelistedStaff(cleanEmail);
+      if (existingStaff) {
+        return res.status(200).json({
+          success: true,
+          message: 'This account is already authorized on the whitelist.',
+          data: { status: 'APPROVED', role: existingStaff.role }
+        });
+      }
+
+      const request = await this.userRepo.createWhitelistRequest({
+        email: cleanEmail,
+        name: name.trim(),
+        mobileNo: cleanMobile,
+        reason: reason ? String(reason).trim() : undefined
+      });
+
+      return res.status(200).json({
+        success: true,
+        message: 'Your request has been submitted to the SAC Admin for review.',
+        data: request
+      });
+    } catch (err: any) {
+      return this.fail(res, err);
+    }
+  };
+
+  /**
+   * GET /api/auth/whitelist-status?email=...
+   * Checks if an email is pending review, approved, or rejected.
+   */
+  public getWhitelistStatus = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const email = req.query.email as string;
+      if (!email) {
+        return this.clientError(res, 'Email query parameter is required');
+      }
+
+      const cleanEmail = email.toLowerCase().trim();
+
+      // Check whitelisted_staff first
+      const staff = await this.userRepo.findWhitelistedStaff(cleanEmail);
+      if (staff) {
+        return res.status(200).json({
+          success: true,
+          data: {
+            status: 'APPROVED',
+            approvedRole: staff.role,
+            email: cleanEmail
+          }
+        });
+      }
+
+      // Check whitelist_requests
+      const request = await this.userRepo.findWhitelistRequestByEmail(cleanEmail);
+      if (request) {
+        return res.status(200).json({
+          success: true,
+          data: {
+            status: request.status,
+            approvedRole: request.approved_role,
+            reason: request.reason,
+            createdAt: request.created_at,
+            email: cleanEmail
+          }
+        });
+      }
+
+      return res.status(200).json({
+        success: true,
+        data: {
+          status: 'NOT_FOUND',
+          email: cleanEmail
         }
       });
     } catch (err: any) {

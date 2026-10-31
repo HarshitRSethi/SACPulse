@@ -25,6 +25,8 @@ export function createApiRouter(): Router {
   router.post('/auth/google', authCtrl.googleAuth);
   router.patch('/auth/mobile-setup', authCtrl.mobileSetup);
   router.patch('/auth/onboarding-mobile', authCtrl.mobileSetup);
+  router.post('/auth/request-whitelist', authCtrl.requestWhitelist);
+  router.get('/auth/whitelist-status', authCtrl.getWhitelistStatus);
 
   // 1. Inventory & Live Campus Status
   router.get('/inventory', inventoryCtrl.getInventory);
@@ -111,6 +113,11 @@ export function createApiRouter(): Router {
   router.post('/admin/inventory', adminCtrl.upsertInventoryItem);
   router.delete('/admin/inventory/:id', adminCtrl.deleteInventoryItem);
   router.get('/admin/users', adminCtrl.listUsers);
+  router.get('/admin/whitelist', adminCtrl.getWhitelist);
+  router.post('/admin/whitelist/approve', adminCtrl.approveWhitelist);
+  router.post('/admin/whitelist/reject', adminCtrl.rejectWhitelist);
+  router.post('/admin/whitelist/direct-add', adminCtrl.directAddWhitelist);
+  router.delete('/admin/whitelist/:id', adminCtrl.revokeWhitelist);
 
   return router;
 }

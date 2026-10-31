@@ -7,6 +7,7 @@ import { DatabaseConnection } from '../infrastructure.persistence/DatabaseConnec
 import { RealtimeEventHub } from '../domain.services/RealtimeEventHub.js';
 import { SportsEquipment, RoomKey } from '../domain.entities/SACItem.js';
 import { Student } from '../domain.entities/User.js';
+import { verifySessionToken } from './AuthController.js';
 import crypto from 'crypto';
 
 export class AdminController extends BaseController {
@@ -240,6 +241,256 @@ export class AdminController extends BaseController {
             : null
         };
       }));
+    } catch (err: any) {
+      return this.fail(res, err);
+    }
+  };
+
+  /**
+   * Helper to extract authenticated caller info from Authorization header or custom header.
+   */
+  private getCaller(req: Request): { email: string; role: string } | null {
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      const token = authHeader.slice(7);
+      const payload = verifySessionToken(token);
+      if (payload) {
+        return { email: payload.email.toLowerCase().trim(), role: payload.role };
+      }
+    }
+    const headerEmail = (req.headers['x-admin-email'] as string) || (req.headers['x-user-email'] as string);
+    if (headerEmail) {
+      return { email: headerEmail.toLowerCase().trim(), role: 'ADMIN' };
+    }
+    return null;
+  }
+
+  /**
+   * Helper to check if an email matches the primary institutional administrator.
+   */
+  private isRootAdmin(email?: string | null): boolean {
+    if (!email) return false;
+    const initialAdminEmail = (process.env.INITIAL_ADMIN_EMAIL || '').toLowerCase().trim();
+    return Boolean(initialAdminEmail && email.toLowerCase().trim() === initialAdminEmail);
+  }
+
+  /**
+   * GET /api/admin/whitelist
+   * Returns { pendingRequests: [...], activeUsers: [...], initialAdminEmail: string }
+   */
+  public getWhitelist = async (_req: Request, res: Response): Promise<Response> => {
+    try {
+      const initialAdminEmail = (process.env.INITIAL_ADMIN_EMAIL || '').toLowerCase().trim();
+      const [pendingRequests, activeUsers] = await Promise.all([
+        this.userRepo.listPendingWhitelistRequests(),
+        this.userRepo.listWhitelistedStaff()
+      ]);
+      return this.ok(res, {
+        pendingRequests,
+        activeUsers,
+        initialAdminEmail
+      });
+    } catch (err: any) {
+      return this.fail(res, err);
+    }
+  };
+
+  /**
+   * POST /api/admin/whitelist/approve
+   * Receives { requestId, role ('STUDENT' | 'GUARD' | 'ADMIN') }
+   */
+  public approveWhitelist = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const { requestId, role } = req.body;
+      if (!requestId) {
+        return this.clientError(res, 'requestId is required');
+      }
+
+      const validRoles = ['STUDENT', 'GUARD', 'ADMIN'];
+      if (!role || !validRoles.includes(role.toUpperCase())) {
+        return this.clientError(res, 'role must be STUDENT, GUARD, or ADMIN');
+      }
+
+      const approvedRole = role.toUpperCase();
+
+      // Rule 3: Only Root Admin can approve as ADMIN
+      if (approvedRole === 'ADMIN') {
+        const caller = this.getCaller(req);
+        if (!caller || !this.isRootAdmin(caller.email)) {
+          return this.forbidden(res, 'Only the primary institutional administrator can grant ADMIN role');
+        }
+      }
+
+      const request = await this.userRepo.findWhitelistRequestById(requestId);
+      if (!request) {
+        return this.notFound(res, 'Whitelist request not found');
+      }
+
+      // Mark request APPROVED
+      const updatedReq = await this.userRepo.updateWhitelistRequestStatus(requestId, 'APPROVED', approvedRole);
+
+      // Insert/upsert into whitelisted_staff with approved role
+      await this.userRepo.addWhitelistedStaff({
+        email: request.email,
+        name: request.name,
+        mobileNo: request.mobile_no,
+        role: approvedRole
+      });
+
+      // Upsert into users table
+      const user = await this.userRepo.upsertUser({
+        email: request.email,
+        name: request.name,
+        role: approvedRole,
+        mobileNo: request.mobile_no,
+        rollNo: approvedRole === 'STUDENT' ? (request.email.split('@')[0].toUpperCase()) : null
+      });
+
+      return this.ok(res, {
+        message: `Request approved as ${approvedRole} and access granted`,
+        request: updatedReq,
+        user: {
+          id: user.getId(),
+          email: user.getEmail(),
+          name: user.getName(),
+          role: user.getRole(),
+          mobileNo: user.getMobileNo()
+        }
+      });
+    } catch (err: any) {
+      return this.fail(res, err);
+    }
+  };
+
+  /**
+   * POST /api/admin/whitelist/reject
+   * Receives { requestId }
+   */
+  public rejectWhitelist = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const { requestId } = req.body;
+      if (!requestId) {
+        return this.clientError(res, 'requestId is required');
+      }
+
+      const request = await this.userRepo.findWhitelistRequestById(requestId);
+      if (!request) {
+        return this.notFound(res, 'Whitelist request not found');
+      }
+
+      const updatedReq = await this.userRepo.updateWhitelistRequestStatus(requestId, 'REJECTED');
+      return this.ok(res, {
+        message: 'Whitelist request rejected',
+        request: updatedReq
+      });
+    } catch (err: any) {
+      return this.fail(res, err);
+    }
+  };
+
+  /**
+   * POST /api/admin/whitelist/direct-add
+   * Receives { email, name, mobileNo, role }
+   */
+  public directAddWhitelist = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const { email, name, mobileNo, role } = req.body;
+
+      if (!email || typeof email !== 'string') {
+        return this.clientError(res, 'Email is required');
+      }
+      if (!name || typeof name !== 'string') {
+        return this.clientError(res, 'Name is required');
+      }
+
+      const validRoles = ['STUDENT', 'GUARD', 'ADMIN'];
+      if (!role || !validRoles.includes(role.toUpperCase())) {
+        return this.clientError(res, 'Role must be STUDENT, GUARD, or ADMIN');
+      }
+
+      const assignedRole = role.toUpperCase();
+
+      // Rule 3: Only Root Admin can direct-add as ADMIN
+      if (assignedRole === 'ADMIN') {
+        const caller = this.getCaller(req);
+        if (!caller || !this.isRootAdmin(caller.email)) {
+          return this.forbidden(res, 'Only the primary institutional administrator can grant ADMIN role');
+        }
+      }
+
+      const cleanEmail = email.toLowerCase().trim();
+      const cleanMobile = mobileNo ? String(mobileNo).trim() : null;
+
+      // Add to whitelisted_staff
+      const staff = await this.userRepo.addWhitelistedStaff({
+        email: cleanEmail,
+        name: name.trim(),
+        mobileNo: cleanMobile,
+        role: assignedRole
+      });
+
+      // Upsert into users table
+      await this.userRepo.upsertUser({
+        email: cleanEmail,
+        name: name.trim(),
+        role: assignedRole,
+        mobileNo: cleanMobile,
+        rollNo: assignedRole === 'STUDENT' ? cleanEmail.split('@')[0].toUpperCase() : null
+      });
+
+      return this.ok(res, staff);
+    } catch (err: any) {
+      return this.fail(res, err);
+    }
+  };
+
+  /**
+   * DELETE /api/admin/whitelist/:id
+   * Removes user from whitelisted_staff, immediately revoking access.
+   * Enforces:
+   * 1. Root admin immunity (cannot be revoked by anyone)
+   * 2. Self-revocation prevention (cannot revoke own account)
+   * 3. Role hierarchy (only Root admin can revoke an ADMIN account)
+   */
+  public revokeWhitelist = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const id = req.params.id as string;
+      if (!id) {
+        return this.clientError(res, 'Whitelist record ID is required');
+      }
+
+      const target = await this.userRepo.findWhitelistedStaffById(id);
+      if (!target) {
+        return this.notFound(res, 'Whitelisted staff record not found');
+      }
+
+      const initialAdminEmail = (process.env.INITIAL_ADMIN_EMAIL || '').toLowerCase().trim();
+      const targetEmail = target.email.toLowerCase().trim();
+
+      // Rule 1: Root Admin immunity
+      if (initialAdminEmail && targetEmail === initialAdminEmail) {
+        return this.forbidden(res, 'The primary institutional administrator cannot be modified or revoked');
+      }
+
+      const caller = this.getCaller(req);
+
+      // Rule 2: Prevent self-revocation
+      if (caller && caller.email.toLowerCase().trim() === targetEmail) {
+        return this.clientError(res, 'You cannot revoke your own account access');
+      }
+
+      // Rule 3: Only Root Admin can revoke an ADMIN account
+      const isTargetAdmin = target.role?.toUpperCase() === 'ADMIN';
+      if (isTargetAdmin) {
+        if (!caller || !this.isRootAdmin(caller.email)) {
+          return this.forbidden(res, 'Only the primary institutional administrator can revoke an ADMIN account');
+        }
+      }
+
+      await this.userRepo.removeWhitelistedStaff(id);
+      return this.ok(res, {
+        message: 'Access revoked successfully and user removed from whitelist'
+      });
     } catch (err: any) {
       return this.fail(res, err);
     }
