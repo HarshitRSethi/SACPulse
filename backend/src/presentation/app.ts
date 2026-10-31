@@ -1,3 +1,8 @@
+import dns from 'dns';
+if (typeof dns.setDefaultResultOrder === 'function') {
+  dns.setDefaultResultOrder('ipv4first');
+}
+
 import express, { type Application, type Request, type Response, type NextFunction } from 'express';
 import cors from 'cors';
 import { createApiRouter } from './routes.js';

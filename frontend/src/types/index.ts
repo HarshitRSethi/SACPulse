@@ -10,6 +10,7 @@ export interface User {
   isDefaulter?: boolean;
   penaltyUntil?: string | null;
   dashboardRoute?: string;
+  requiresMobileSetup?: boolean;
 }
 
 export type ItemType = 'EQUIPMENT' | 'ROOM_KEY';

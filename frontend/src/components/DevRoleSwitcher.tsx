@@ -1,9 +1,9 @@
-import React from 'react';
+import React, { useState } from 'react';
 import type { User } from '../types/index';
-import { UserCheck, Shield, Award, Wifi, WifiOff } from 'lucide-react';
+import { Wrench, X, Check, Loader2 } from 'lucide-react';
 
 export interface DevUserPreset {
-  id: string;
+  id?: string;
   name: string;
   email: string;
   role: 'STUDENT' | 'GUARD' | 'ADMIN';
@@ -37,7 +37,7 @@ export const PRESET_USERS: DevUserPreset[] = [
   {
     id: '4088da13-39c6-4257-9880-6f17e55fec2b',
     name: 'SAC Guard Ramesh',
-    email: 'guard@iiita.ac.in',
+    email: 'guard.sac.iiita@gmail.com',
     role: 'GUARD',
     avatar: '👮‍♂️',
     label: 'SAC Guard',
@@ -57,116 +57,132 @@ export const PRESET_USERS: DevUserPreset[] = [
 interface DevRoleSwitcherProps {
   currentUser: User | null;
   onSelectUser: (preset: DevUserPreset) => void;
-  isSocketConnected: boolean;
+  isSwitching?: boolean;
 }
 
 export const DevRoleSwitcher: React.FC<DevRoleSwitcherProps> = ({
   currentUser,
   onSelectUser,
-  isSocketConnected
+  isSwitching = false
 }) => {
+  const [isOpen, setIsOpen] = useState(false);
+
+  const activePreset = PRESET_USERS.find(
+    (p) =>
+      p.email.toLowerCase() === currentUser?.email?.toLowerCase() ||
+      p.id === currentUser?.id
+  );
+
   return (
-    <header className="sticky top-0 z-20 bg-white/95 backdrop-blur-md border-b border-[#E4E4E7] px-4 py-2.5 shadow-sm">
-      <div className="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-3">
-        {/* Branding & Socket Live Indicator */}
-        <div className="flex items-center gap-3">
-          <div className="flex items-center gap-2">
-            <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-blue-600 font-black text-white text-sm shadow-sm shadow-blue-500/20">
-              ⚡
-            </span>
-            <div>
-              <span className="text-base font-extrabold tracking-tight text-zinc-900 flex items-center gap-1.5">
-                SACPulse
-                <span className="text-[10px] uppercase font-mono font-bold px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200">
-                  IIITA
-                </span>
+    <aside aria-label="Developer Role Switcher" className="fixed bottom-5 right-5 z-50 flex flex-col items-end">
+      {/* Expanded Floating Card */}
+      {isOpen && (
+        <div className="mb-3 w-80 sm:w-96 bg-white/95 backdrop-blur-md rounded-3xl border border-zinc-200/90 shadow-2xl p-5 animate-in slide-in-from-bottom-2 duration-150">
+          <div className="flex items-center justify-between pb-3 border-b border-zinc-100">
+            <div className="flex items-center gap-2">
+              <span className="p-1.5 rounded-xl bg-zinc-100 text-zinc-800 text-sm">
+                🛠️
               </span>
+              <div>
+                <h3 className="font-extrabold text-xs text-zinc-900 tracking-tight">
+                  Dev Role Switcher
+                </h3>
+                <span className="text-[10px] text-zinc-400 font-mono">
+                  Multi-account testing dock
+                </span>
+              </div>
             </div>
+            <button
+              onClick={() => setIsOpen(false)}
+              className="p-1 rounded-xl hover:bg-zinc-100 text-zinc-400 hover:text-zinc-700 transition"
+              title="Close Dock"
+            >
+              <X className="w-4 h-4" />
+            </button>
           </div>
 
-          <div
-            className={`hidden sm:inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold transition-all ${
-              isSocketConnected
-                ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                : 'bg-amber-50 text-amber-700 border border-amber-200'
-            }`}
-            title={isSocketConnected ? 'Real-Time WebSocket Sync Connected' : 'Reconnecting to Real-Time Hub...'}
-          >
-            {isSocketConnected ? (
-              <>
-                <span className="relative flex h-2 w-2">
-                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
-                  <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
-                </span>
-                <span className="flex items-center gap-1">
-                  <Wifi className="w-3 h-3" /> Live Sync
-                </span>
-              </>
-            ) : (
-              <>
-                <span className="h-2 w-2 rounded-full bg-amber-500 animate-pulse" />
-                <span className="flex items-center gap-1">
-                  <WifiOff className="w-3 h-3" /> Connecting...
-                </span>
-              </>
-            )}
-          </div>
-        </div>
+          <p className="text-[11px] text-zinc-500 my-3 leading-relaxed">
+            Instantly switch authenticated sessions to verify student requests, guard counter returns, or admin governance:
+          </p>
 
-        {/* Dev Role Quick-Switcher Pills */}
-        <div className="flex items-center gap-1.5 overflow-x-auto pb-1 sm:pb-0 scrollbar-none">
-          <span className="text-[11px] uppercase tracking-wider text-zinc-400 font-bold mr-1 hidden md:inline">
-            Role Switcher:
-          </span>
-          {PRESET_USERS.map((preset) => {
-            const isActive = currentUser?.id === preset.id;
-            return (
-              <button
-                key={preset.id}
-                onClick={() => onSelectUser(preset)}
-                className={`relative group flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all duration-150 ${
-                  isActive
-                    ? 'bg-zinc-900 text-white shadow-sm ring-1 ring-zinc-800'
-                    : 'bg-zinc-100 hover:bg-zinc-200/80 text-zinc-700 border border-zinc-200'
-                }`}
-              >
-                <span className="text-sm">{preset.avatar}</span>
-                <span className="whitespace-nowrap">{preset.label}</span>
-                <span
-                  className={`text-[10px] px-1 rounded font-mono ${
+          <div className="space-y-2">
+            {PRESET_USERS.map((preset) => {
+              const isActive =
+                preset.email.toLowerCase() === currentUser?.email?.toLowerCase() ||
+                preset.id === currentUser?.id;
+
+              return (
+                <button
+                  key={preset.email}
+                  disabled={isSwitching}
+                  onClick={() => {
+                    onSelectUser(preset);
+                    setIsOpen(false);
+                  }}
+                  className={`w-full flex items-center justify-between p-2.5 rounded-2xl text-left border transition-all ${
                     isActive
-                      ? 'bg-white/20 text-white'
-                      : 'bg-zinc-200 text-zinc-600'
+                      ? 'bg-zinc-900 text-white border-zinc-900 shadow-sm'
+                      : 'bg-zinc-50 hover:bg-zinc-100 text-zinc-800 border-zinc-200/80 hover:border-zinc-300'
                   }`}
                 >
-                  {preset.badge}
-                </span>
-              </button>
-            );
-          })}
-        </div>
+                  <div className="flex items-center gap-2.5">
+                    <span className="text-lg">{preset.avatar}</span>
+                    <div>
+                      <div className="flex items-center gap-1.5">
+                        <span className="font-bold text-xs">{preset.label}</span>
+                        <span
+                          className={`text-[9px] font-mono px-1.5 py-0.5 rounded ${
+                            isActive
+                              ? 'bg-zinc-800 text-zinc-200'
+                              : 'bg-zinc-200/80 text-zinc-600'
+                          }`}
+                        >
+                          {preset.badge}
+                        </span>
+                      </div>
+                      <span
+                        className={`text-[10px] font-mono block ${
+                          isActive ? 'text-zinc-300' : 'text-zinc-500'
+                        }`}
+                      >
+                        {preset.email}
+                      </span>
+                    </div>
+                  </div>
 
-        {/* Active User Pill */}
-        {currentUser && (
-          <div className="hidden lg:flex items-center gap-2 pl-3 border-l border-zinc-200 text-xs">
-            <div className="flex flex-col text-right">
-              <span className="font-bold text-zinc-900">{currentUser.name}</span>
-              <span className="text-[11px] text-zinc-500 font-mono">
-                {currentUser.rollNo || currentUser.role}
-              </span>
-            </div>
-            {currentUser.role === 'ADMIN' && (
-              <Award className="w-4 h-4 text-purple-600" />
-            )}
-            {currentUser.role === 'GUARD' && (
-              <Shield className="w-4 h-4 text-amber-600" />
-            )}
-            {currentUser.role === 'STUDENT' && (
-              <UserCheck className="w-4 h-4 text-blue-600" />
-            )}
+                  {isActive && (
+                    <span className="flex items-center gap-1 text-[10px] font-mono font-bold text-emerald-400 bg-emerald-950/40 px-2 py-0.5 rounded-full border border-emerald-500/30">
+                      <Check className="w-3 h-3" /> Active
+                    </span>
+                  )}
+                </button>
+              );
+            })}
           </div>
+        </div>
+      )}
+
+      {/* Collapsed Subtle Floating Pill */}
+      <button
+        onClick={() => setIsOpen(!isOpen)}
+        disabled={isSwitching}
+        className="group relative flex items-center gap-2 px-3.5 py-2.5 rounded-full bg-zinc-900/90 hover:bg-zinc-950 text-white border border-zinc-800 shadow-xl backdrop-blur-md text-xs font-semibold transition-all hover:scale-105 active:scale-95"
+        title="Toggle Developer Account Switcher"
+      >
+        {isSwitching ? (
+          <Loader2 className="w-3.5 h-3.5 animate-spin text-blue-400" />
+        ) : (
+          <Wrench className="w-3.5 h-3.5 text-zinc-400 group-hover:text-amber-400 transition" />
         )}
-      </div>
-    </header>
+        <span>Dev Switcher</span>
+
+        {activePreset && (
+          <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-zinc-800 text-[10px] font-mono text-zinc-300 border border-zinc-700">
+            <span>{activePreset.avatar}</span>
+            <span className="hidden sm:inline">{activePreset.label}</span>
+          </span>
+        )}
+      </button>
+    </aside>
   );
 };

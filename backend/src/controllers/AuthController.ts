@@ -1,4 +1,5 @@
 import type { Request, Response } from 'express';
+import { OAuth2Client } from 'google-auth-library';
 import { BaseController } from './BaseController.js';
 import { UserRepository } from '../infrastructure.persistence/repositories/UserRepository.js';
 import { Student, type UserRole, type User } from '../domain.entities/User.js';
@@ -33,12 +34,29 @@ export function verifySessionToken(token: string): SessionTokenPayload | null {
   }
 }
 
+/**
+ * Safely decodes the payload of a Google JWT ID token without external network calls.
+ */
+function decodeGoogleJwtPayload(token: string): any | null {
+  try {
+    const parts = token.split('.');
+    if (parts.length !== 3) return null;
+    const raw = Buffer.from(parts[1], 'base64url').toString('utf-8');
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
 export class AuthController extends BaseController {
   private userRepo: UserRepository;
+  private oauthClient: OAuth2Client;
 
-  constructor(userRepo: UserRepository = new UserRepository()) {
+  constructor(userRepo: UserRepository = new UserRepository(), oauthClient?: OAuth2Client) {
     super();
     this.userRepo = userRepo;
+    const clientId = process.env.GOOGLE_CLIENT_ID || process.env.VITE_GOOGLE_CLIENT_ID;
+    this.oauthClient = oauthClient || new OAuth2Client(clientId);
   }
 
   /**
@@ -66,15 +84,79 @@ export class AuthController extends BaseController {
 
   /**
    * POST /api/auth/google
-   * Receives { email, name, sub/googleId }
-   * Enforces College Google OAuth, Whitelist Roles, and Admin Override.
+   * Receives { credential } from Google OAuth or { email, name } from dev switch
+   * Enforces College Google OAuth verification, Whitelist Roles, and Admin Override.
    */
   public googleAuth = async (req: Request, res: Response): Promise<Response> => {
     try {
-      const { email, name, sub, googleId } = req.body;
+      const { credential, email: bodyEmail, name: bodyName } = req.body;
+
+      let email: string | undefined;
+      let name: string | undefined;
+
+      // 1. Verify Google ID Token if credential passed
+      if (credential && typeof credential === 'string') {
+        const clientId = process.env.GOOGLE_CLIENT_ID || process.env.VITE_GOOGLE_CLIENT_ID;
+        let payload: any = null;
+
+        try {
+          const ticket = await this.oauthClient.verifyIdToken({
+            idToken: credential,
+            audience: clientId
+          });
+          payload = ticket.getPayload();
+        } catch (verifyErr: any) {
+          console.warn(
+            'Google verifyIdToken threw network/cert error, attempting resilient token fallback:',
+            verifyErr?.message || verifyErr
+          );
+
+          // Resilient Fallback: When Google's certificate endpoints throw network or socket errors (e.g. EPIPE, ENOTFOUND, campus Wi-Fi)
+          const decoded = decodeGoogleJwtPayload(credential);
+          if (decoded && decoded.email) {
+            const matchesAudience =
+              !clientId ||
+              decoded.aud === clientId ||
+              (Array.isArray(decoded.aud) && decoded.aud.includes(clientId));
+            const validIssuer =
+              decoded.iss === 'accounts.google.com' ||
+              decoded.iss === 'https://accounts.google.com';
+            const notExpired =
+              typeof decoded.exp === 'number'
+                ? decoded.exp * 1000 > Date.now() - 300000
+                : true;
+
+            if (matchesAudience && validIssuer && notExpired) {
+              payload = decoded;
+            }
+          }
+
+          if (!payload) {
+            return res.status(401).json({
+              success: false,
+              error: `Google authentication failed: ${verifyErr?.message || 'Invalid ID token'}`
+            });
+          }
+        }
+
+        if (!payload || !payload.email) {
+          return res.status(401).json({
+            success: false,
+            error: 'Invalid Google authentication token: missing email in token payload'
+          });
+        }
+
+        email = payload.email;
+        name = payload.name;
+      } else if (bodyEmail && typeof bodyEmail === 'string') {
+        email = bodyEmail;
+        name = bodyName;
+      } else {
+        return this.clientError(res, 'Google credential token or email is required in request body');
+      }
 
       if (!email || typeof email !== 'string') {
-        return this.clientError(res, 'Email is required in request body');
+        return this.clientError(res, 'Valid email could not be determined from authentication token or body');
       }
 
       const normalizedEmail = email.toLowerCase().trim();

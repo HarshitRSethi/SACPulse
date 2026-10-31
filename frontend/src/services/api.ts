@@ -2,7 +2,94 @@ import type { SACItem, User, IssueRequest, ActiveBatch, IncomingTransfer } from 
 
 const API_BASE = '/api';
 
+const TOKEN_KEY = 'sacpulse_auth_token';
+const USER_KEY = 'sacpulse_auth_user';
+
+export const authStorage = {
+  getToken(): string | null {
+    try {
+      return localStorage.getItem(TOKEN_KEY);
+    } catch {
+      return null;
+    }
+  },
+  getUser(): User | null {
+    try {
+      const raw = localStorage.getItem(USER_KEY);
+      return raw ? JSON.parse(raw) : null;
+    } catch {
+      return null;
+    }
+  },
+  setAuth(token: string, user: User): void {
+    try {
+      localStorage.setItem(TOKEN_KEY, token);
+      localStorage.setItem(USER_KEY, JSON.stringify(user));
+    } catch (e) {
+      console.error('Failed to save auth to localStorage:', e);
+    }
+  },
+  clearAuth(): void {
+    try {
+      localStorage.removeItem(TOKEN_KEY);
+      localStorage.removeItem(USER_KEY);
+    } catch (e) {
+      console.error('Failed to clear auth from localStorage:', e);
+    }
+  }
+};
+
 export const api = {
+  // Auth
+  async loginWithGoogle(
+    param: string | { credential?: string; email?: string; name?: string },
+    name?: string,
+    sub?: string
+  ): Promise<{ token: string; sessionToken: string; user: User; requiresMobileSetup: boolean }> {
+    const payload = typeof param === 'string'
+      ? { email: param, name, sub }
+      : param;
+
+    const res = await fetch(`${API_BASE}/auth/google`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    const json = await res.json();
+    if (!json.success) throw new Error(json.error || 'Failed to authenticate');
+    return json.data;
+  },
+
+  async submitMobileSetup(
+    mobileNo: string,
+    token?: string,
+    userId?: string
+  ): Promise<User> {
+    const authToken = token || authStorage.getToken();
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json'
+    };
+    if (authToken) {
+      headers['Authorization'] = `Bearer ${authToken}`;
+    }
+    if (userId) {
+      headers['x-user-id'] = userId;
+    }
+
+    const res = await fetch(`${API_BASE}/auth/mobile-setup`, {
+      method: 'PATCH',
+      headers,
+      body: JSON.stringify({ mobileNo, userId })
+    });
+    const json = await res.json();
+    if (!json.success) throw new Error(json.error || 'Failed to update mobile number');
+    return json.data;
+  },
+
+  getStoredUser: authStorage.getUser,
+  getStoredToken: authStorage.getToken,
+  setStoredAuth: authStorage.setAuth,
+  clearStoredAuth: authStorage.clearAuth,
   // Inventory
   async getInventory(): Promise<SACItem[]> {
     const res = await fetch(`${API_BASE}/inventory`);

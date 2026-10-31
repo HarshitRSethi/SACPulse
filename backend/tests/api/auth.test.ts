@@ -102,6 +102,22 @@ describe('SACPulse Auth & Whitelist Roles Integration Tests (Part 1B)', () => {
     expect(body.error).toBe('Access restricted to @iiita.ac.in or whitelisted accounts');
   });
 
+  // 3b. Invalid Google ID token credential returns 401 Unauthorized
+  it('POST /api/auth/google should reject invalid Google credential token with 401 Unauthorized', async () => {
+    const res = await fetch(`${baseUrl}/api/auth/google`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        credential: 'invalid.bogus.jwt.token'
+      })
+    });
+
+    expect(res.status).toBe(401);
+    const body = await res.json();
+    expect(body.success).toBe(false);
+    expect(body.error).toContain('Google authentication failed');
+  });
+
   // 4. Mobile setup updates phone number and rejects invalid inputs
   describe('PATCH /api/auth/mobile-setup', () => {
     it('should reject requests without authentication with 401 Unauthorized', async () => {
