@@ -2,6 +2,7 @@ import type { Request, Response } from 'express';
 import { BaseController } from './BaseController.js';
 import { SACItemRepository } from '../infrastructure.persistence/repositories/SACItemRepository.js';
 import { RoomKey } from '../domain.entities/SACItem.js';
+import { DatabaseConnection } from '../infrastructure.persistence/DatabaseConnection.js';
 
 export class InventoryController extends BaseController {
   private itemRepo: SACItemRepository;
@@ -21,6 +22,19 @@ export class InventoryController extends BaseController {
     try {
       const items = await this.itemRepo.findAll();
 
+      // Check active holdings in register_logs
+      let activeRoomIds = new Set<string>();
+      const supabase = DatabaseConnection.getInstance().getSupabase();
+      if (supabase) {
+        const { data: activeLogs } = await supabase
+          .from('register_logs')
+          .select('item_id')
+          .in('status', ['ISSUED', 'ISSUED_TRANSFER_PENDING']);
+        if (activeLogs) {
+          activeRoomIds = new Set(activeLogs.map((l: any) => l.item_id));
+        }
+      }
+
       const responseDto = items.map((item) => {
         const base = {
           id: item.getId(),
@@ -33,9 +47,15 @@ export class InventoryController extends BaseController {
         };
 
         if (item instanceof RoomKey) {
+          const occupiedSince = item.getOccupiedSince() ? item.getOccupiedSince()!.toISOString() : null;
+          const hasActiveStudentCheckout = activeRoomIds.has(item.getId());
+          const isFacultySession = Boolean(occupiedSince && !hasActiveStudentCheckout);
+
           return {
             ...base,
-            occupiedSince: item.getOccupiedSince() ? item.getOccupiedSince()!.toISOString() : null
+            occupiedSince,
+            hasActiveStudentCheckout,
+            isFacultySession
           };
         }
 

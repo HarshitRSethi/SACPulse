@@ -39,6 +39,8 @@ export function createApiRouter(): Router {
   router.post('/guard/returns/batch/:batchId/intact', guardCtrl.returnBatchIntact);
   router.post('/guard/returns/:entryId/damaged', guardCtrl.returnUnitDamaged);
   router.get('/guard/register/active', guardCtrl.getActiveRegister);
+  router.post('/guard/rooms/:id/faculty-occupy', guardCtrl.facultyOccupyRoom);
+  router.post('/guard/rooms/:id/release', guardCtrl.releaseRoom);
 
   // 4. Peer-to-Peer Transfers
   router.post('/transfers/:entryId/initiate', transferCtrl.initiateTransfer);

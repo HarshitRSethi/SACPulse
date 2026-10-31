@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import type { User, IssueRequest, ActiveBatch } from '../../types/index';
+import type { User, IssueRequest, ActiveBatch, SACItem } from '../../types/index';
 import { api } from '../../services/api';
 import { socketService } from '../../services/socket';
 import {
@@ -13,7 +13,9 @@ import {
   Check,
   UserCheck,
   PackageCheck,
-  RefreshCw
+  RefreshCw,
+  KeyRound,
+  DoorOpen
 } from 'lucide-react';
 
 interface GuardDashboardProps {
@@ -142,22 +144,73 @@ const QueueCard: React.FC<{
 export const GuardDashboard: React.FC<GuardDashboardProps> = ({ currentUser }) => {
   const [pendingRequests, setPendingRequests] = useState<IssueRequest[]>([]);
   const [activeBatches, setActiveBatches] = useState<ActiveBatch[]>([]);
+  const [rooms, setRooms] = useState<SACItem[]>([]);
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [isActionPending, setIsActionPending] = useState<boolean>(false);
   const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
   const [showRefreshedCheck, setShowRefreshedCheck] = useState<boolean>(false);
   const [actionMessage, setActionMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
+  const formatTime = (val?: string | null) => {
+    if (!val) return '';
+    const d = new Date(val);
+    if (isNaN(d.getTime())) return '';
+    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true });
+  };
+
   const loadCounterData = async () => {
     try {
-      const [queueData, registerData] = await Promise.all([
+      const [queueData, registerData, invData] = await Promise.all([
         api.getPendingRequests(),
-        api.getActiveRegister()
+        api.getActiveRegister(),
+        api.getInventory()
       ]);
       setPendingRequests(queueData);
       setActiveBatches(registerData);
+      setRooms(invData.filter((i) => i.itemType === 'ROOM_KEY'));
     } catch (err: any) {
       console.error('Failed to load guard desk data:', err);
+    }
+  };
+
+  const handleFacultyOccupy = async (roomId: string, roomName: string) => {
+    try {
+      setIsActionPending(true);
+      setActionMessage(null);
+      await api.occupyRoomForFaculty(roomId);
+      setActionMessage({
+        type: 'success',
+        text: `${roomName} marked occupied for Faculty / Event.`
+      });
+      await loadCounterData();
+    } catch (err: any) {
+      setActionMessage({
+        type: 'error',
+        text: err.message || `Failed to occupy ${roomName}`
+      });
+    } finally {
+      setIsActionPending(false);
+    }
+  };
+
+  const handleReleaseRoom = async (roomId: string, roomName: string) => {
+    try {
+      setIsActionPending(true);
+      setActionMessage(null);
+      await api.releaseRoom(roomId);
+      setActionMessage({
+        type: 'success',
+        text: `${roomName} released and returned to Available pool.`
+      });
+      await loadCounterData();
+    } catch (err: any) {
+      setActionMessage({
+        type: 'error',
+        text: err.message || `Failed to release ${roomName}`
+      });
+    } finally {
+      setIsActionPending(false);
     }
   };
 
@@ -380,6 +433,98 @@ export const GuardDashboard: React.FC<GuardDashboardProps> = ({ currentUser }) =
           </button>
         </div>
       )}
+
+      {/* Activity Rooms & Courts Control Panel */}
+      <section className="bg-white border border-[#E4E4E7] rounded-2xl p-4 sm:p-5 shadow-xs space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-zinc-100 pb-3">
+          <div className="flex items-center gap-2.5">
+            <span className="p-2 rounded-xl bg-amber-50 text-amber-700 border border-amber-200">
+              <KeyRound className="w-4 h-4" />
+            </span>
+            <div>
+              <h2 className="text-base font-bold text-zinc-900 tracking-tight">
+                Activity Rooms & Courts Control Panel
+              </h2>
+              <p className="text-xs text-zinc-500">
+                1-tap faculty session & campus event override for physical room keys
+              </p>
+            </div>
+          </div>
+          <span className="text-[11px] font-mono text-zinc-400 bg-zinc-50 px-2.5 py-1 rounded-lg border border-zinc-200 self-start sm:self-auto">
+            {rooms.length} Facility Spaces
+          </span>
+        </div>
+
+        {rooms.length === 0 ? (
+          <div className="text-center py-6 text-zinc-400 text-xs font-mono">
+            No activity rooms found in inventory.
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5">
+            {rooms.map((room) => {
+              const isAvailable = room.isAvailable && room.availableQty > 0;
+              const occupiedTime = formatTime((room as any).occupied_since || room.occupiedSince);
+
+              return (
+                <div
+                  key={room.id}
+                  className="p-4 rounded-xl border border-[#E4E4E7] bg-zinc-50/60 hover:bg-white hover:border-zinc-300 transition-all flex flex-col justify-between gap-3 shadow-xs"
+                >
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-zinc-600 bg-zinc-100 px-2 py-0.5 rounded-md border border-zinc-200">
+                        <DoorOpen className="w-3 h-3 text-zinc-500" />
+                        {room.category}
+                      </span>
+                      {isAvailable ? (
+                        <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                          Available Now
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-amber-50 text-amber-800 border border-amber-200">
+                          <Clock className="w-3 h-3 text-amber-600" />
+                          Occupied {occupiedTime ? `since ${occupiedTime}` : ''}
+                        </span>
+                      )}
+                    </div>
+
+                    <h3 className="font-bold text-sm text-zinc-900 tracking-tight">
+                      {room.name}
+                    </h3>
+                  </div>
+
+                  <div className="pt-2 border-t border-zinc-200/70 flex items-center justify-between gap-2">
+                    <span className="text-[11px] text-zinc-400 font-mono">
+                      {isAvailable ? '1 Key in Locker' : 'Key In Use'}
+                    </span>
+
+                    {isAvailable ? (
+                      <button
+                        onClick={() => handleFacultyOccupy(room.id, room.name)}
+                        disabled={isActionPending || isLoading}
+                        className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-amber-500 hover:bg-amber-600 text-white shadow-xs transition flex items-center gap-1.5 active:scale-95 disabled:opacity-50"
+                      >
+                        <Clock className="w-3.5 h-3.5" />
+                        Occupy for Faculty / Event
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => handleReleaseRoom(room.id, room.name)}
+                        disabled={isActionPending || isLoading}
+                        className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs transition flex items-center gap-1.5 active:scale-95 disabled:opacity-50"
+                      >
+                        <RotateCcw className="w-3.5 h-3.5" />
+                        Release Room
+                      </button>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </section>
 
       {/* Responsive Grid: Queue (Left) & Active Register (Right) */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">

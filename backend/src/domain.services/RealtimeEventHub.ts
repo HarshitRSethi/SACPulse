@@ -1,4 +1,4 @@
-import type { SACItem } from '../domain.entities/SACItem.js';
+import { RoomKey, type SACItem } from '../domain.entities/SACItem.js';
 import type { IssueRequest } from '../domain.entities/IssueRequest.js';
 
 export type EventCallback = (payload: any) => void;
@@ -9,7 +9,7 @@ export type EventCallback = (payload: any) => void;
  * from presentation/transport mechanisms (Socket.io / Server-Sent Events).
  */
 export class RealtimeEventHub {
-  private static instance: RealtimeEventHub | null = null;
+  private static instance: null | RealtimeEventHub = null;
   private listeners: Map<string, Set<EventCallback>> = new Map();
 
   private constructor() {}
@@ -53,15 +53,18 @@ export class RealtimeEventHub {
   }
 
   public broadcastInventoryUpdate(item: SACItem): void {
-    this.emit('INVENTORY_UPDATED', {
+    const payload = {
       itemId: item.getId(),
       name: item.getName(),
       category: item.getCategory(),
       itemType: item.getItemType(),
       totalQty: item.getTotalQty(),
       availableQty: item.getAvailableQty(),
+      occupiedSince: item instanceof RoomKey ? item.getOccupiedSince()?.toISOString() || null : null,
       timestamp: new Date().toISOString()
-    });
+    };
+    this.emit('INVENTORY_UPDATED', payload);
+    this.emit('inventory:updated', payload);
   }
 
   public notifyGuardQueue(

@@ -5,6 +5,7 @@ import { IssueRequestRepository } from '../infrastructure.persistence/repositori
 import { SACItemRepository } from '../infrastructure.persistence/repositories/SACItemRepository.js';
 import { IssueRequestTTLScheduler } from '../domain.services/IssueRequestTTLScheduler.js';
 import { RealtimeEventHub } from '../domain.services/RealtimeEventHub.js';
+import { RoomKey } from '../domain.entities/SACItem.js';
 
 export class GuardCounterController extends BaseController {
   private regRepo: RegisterLogRepository;
@@ -221,6 +222,91 @@ export class GuardCounterController extends BaseController {
       }
 
       return this.ok(res, Array.from(batchesMap.values()));
+    } catch (err: any) {
+      return this.fail(res, err);
+    }
+  };
+
+  /**
+   * POST /api/guard/rooms/:id/faculty-occupy
+   * Validates item is ROOM_KEY. Updates sac_items setting occupied_since = NOW() and available_qty = 0.
+   * Broadcasts inventory:updated via RealtimeEventHub.
+   */
+  public facultyOccupyRoom = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const id = req.params.id as string;
+      const item = await this.itemRepo.findById(id);
+
+      if (!item) {
+        return this.notFound(res, 'Item not found');
+      }
+
+      if (item.getItemType() !== 'ROOM_KEY' || !(item instanceof RoomKey)) {
+        return this.clientError(res, 'Item is not an activity room key.');
+      }
+
+      if (item.getOccupiedSince() !== null || item.getAvailableQty() === 0) {
+        return this.conflict(res, `Room '${item.getName()}' is already occupied.`);
+      }
+
+      const now = new Date();
+      item.allocateUnit(1, now);
+      await this.itemRepo.save(item);
+
+      // Broadcast real-time inventory update
+      this.hub.broadcastInventoryUpdate(item);
+
+      return this.ok(res, {
+        message: `Room '${item.getName()}' occupied for faculty / event.`,
+        item: {
+          id: item.getId(),
+          name: item.getName(),
+          category: item.getCategory(),
+          itemType: item.getItemType(),
+          availableQty: item.getAvailableQty(),
+          occupiedSince: item.getOccupiedSince()?.toISOString()
+        }
+      });
+    } catch (err: any) {
+      return this.fail(res, err);
+    }
+  };
+
+  /**
+   * POST /api/guard/rooms/:id/release
+   * Resets occupied_since = NULL and available_qty = 1.
+   * Broadcasts inventory:updated via RealtimeEventHub.
+   */
+  public releaseRoom = async (req: Request, res: Response): Promise<Response> => {
+    try {
+      const id = req.params.id as string;
+      const item = await this.itemRepo.findById(id);
+
+      if (!item) {
+        return this.notFound(res, 'Item not found');
+      }
+
+      if (item.getItemType() !== 'ROOM_KEY' || !(item instanceof RoomKey)) {
+        return this.clientError(res, 'Item is not an activity room key.');
+      }
+
+      item.releaseUnit(1);
+      await this.itemRepo.save(item);
+
+      // Broadcast real-time inventory update
+      this.hub.broadcastInventoryUpdate(item);
+
+      return this.ok(res, {
+        message: `Room '${item.getName()}' released successfully.`,
+        item: {
+          id: item.getId(),
+          name: item.getName(),
+          category: item.getCategory(),
+          itemType: item.getItemType(),
+          availableQty: item.getAvailableQty(),
+          occupiedSince: null
+        }
+      });
     } catch (err: any) {
       return this.fail(res, err);
     }

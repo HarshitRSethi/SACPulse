@@ -146,6 +146,24 @@ export const api = {
     return json.data;
   },
 
+  async occupyRoomForFaculty(roomId: string): Promise<any> {
+    const res = await fetch(`${API_BASE}/guard/rooms/${roomId}/faculty-occupy`, {
+      method: 'POST'
+    });
+    const json = await res.json();
+    if (!json.success) throw new Error(json.error || 'Failed to occupy room for faculty');
+    return json.data;
+  },
+
+  async releaseRoom(roomId: string): Promise<any> {
+    const res = await fetch(`${API_BASE}/guard/rooms/${roomId}/release`, {
+      method: 'POST'
+    });
+    const json = await res.json();
+    if (!json.success) throw new Error(json.error || 'Failed to release room');
+    return json.data;
+  },
+
   // Admin Console
   async getAdminLogs(params?: { status?: string; page?: number; limit?: number }): Promise<{
     logs: any[];

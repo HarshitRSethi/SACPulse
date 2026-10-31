@@ -149,6 +149,12 @@ export const LiveCampusFeed: React.FC<LiveCampusFeedProps> = ({
             {roomItems.map((room) => {
               const isAvailable = room.isAvailable && room.availableQty > 0;
               const selectedQty = selectedCounts[room.id] || 0;
+              const occupiedSinceTime = (room as any).occupied_since || room.occupiedSince;
+              const hasActiveStudentCheckout = room.hasActiveStudentCheckout ?? false;
+              const isFacultySession = Boolean(
+                room.isFacultySession ||
+                (occupiedSinceTime && !hasActiveStudentCheckout && !isAvailable)
+              );
 
               return (
                 <div
@@ -168,10 +174,15 @@ export const LiveCampusFeed: React.FC<LiveCampusFeedProps> = ({
                           <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
                           Available Now
                         </span>
+                      ) : isFacultySession ? (
+                        <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-amber-50 text-amber-800 border border-amber-200">
+                          <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
+                          Occupied {formatOccupiedTime(occupiedSinceTime) ? `since ${formatOccupiedTime(occupiedSinceTime)} ` : ''}(Faculty Session)
+                        </span>
                       ) : (
                         <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-amber-50 text-amber-800 border border-amber-200">
                           <Clock className="w-3 h-3 text-amber-600" />
-                          Occupied {formatOccupiedTime((room as any).occupied_since || room.occupiedSince) ? `since ${formatOccupiedTime((room as any).occupied_since || room.occupiedSince)}` : ''}
+                          Occupied {formatOccupiedTime(occupiedSinceTime) ? `since ${formatOccupiedTime(occupiedSinceTime)}` : ''}
                         </span>
                       )}
                     </div>
@@ -204,6 +215,8 @@ export const LiveCampusFeed: React.FC<LiveCampusFeedProps> = ({
                     <p className="text-[11px] text-zinc-400 mt-2">
                       {isAvailable
                         ? 'Key ready in counter locker for instant checkout.'
+                        : isFacultySession
+                        ? 'Reserved for faculty session or campus event. Key unavailable for student checkout.'
                         : 'Currently in use by student group. Holder details protected by SAC policy.'}
                     </p>
                   </div>
@@ -231,6 +244,8 @@ export const LiveCampusFeed: React.FC<LiveCampusFeedProps> = ({
                         <>
                           <Plus className="w-3.5 h-3.5" /> Checkout Key
                         </>
+                      ) : isFacultySession ? (
+                        'Occupied (Faculty)'
                       ) : (
                         'Occupied'
                       )}

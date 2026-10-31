@@ -23,6 +23,8 @@ export interface SACItem {
   availableQty: number;
   isAvailable: boolean;
   occupiedSince?: string | null;
+  hasActiveStudentCheckout?: boolean;
+  isFacultySession?: boolean;
 }
 
 export interface RequestedItem {
