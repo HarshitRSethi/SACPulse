@@ -1,19 +1,30 @@
-import { IssueRequest, type RequestedItem, type IssueRequestStatus } from '../../domain.entities/IssueRequest.js';
+import {
+  IssueRequest,
+  type IssueRequestStatus,
+  type RequestedItem
+} from '../../../domain/entities/IssueRequest.js';
+import type { IIssueRequestRepository } from '../../../domain/repositories/IIssueRequestRepository.js';
 import { DatabaseConnection } from '../DatabaseConnection.js';
-import type { ITTLPersistenceDelegate } from '../../domain.services/IssueRequestTTLScheduler.js';
 
-export class IssueRequestRepository implements ITTLPersistenceDelegate {
-  private db: DatabaseConnection;
+export class SupabaseIssueRequestRepository implements IIssueRequestRepository {
+  private readonly db: DatabaseConnection;
 
-  constructor() {
-    this.db = DatabaseConnection.getInstance();
+  constructor(db: DatabaseConnection = DatabaseConnection.getInstance()) {
+    this.db = db;
   }
 
   private mapRowToEntity(row: any): IssueRequest {
+    const rawItems: any[] = Array.isArray(row.requested_items) ? row.requested_items : [];
+    const normalizedItems: RequestedItem[] = rawItems.map((i) => ({
+      itemId: i.itemId || i.item_id,
+      name: i.name,
+      qty: Number(i.qty ?? 1)
+    }));
+
     return new IssueRequest(
       row.id,
       row.student_id,
-      (row.requested_items || []) as RequestedItem[],
+      normalizedItems,
       row.status as IssueRequestStatus,
       new Date(row.created_at),
       new Date(row.expires_at),
@@ -22,9 +33,7 @@ export class IssueRequestRepository implements ITTLPersistenceDelegate {
   }
 
   public async create(request: IssueRequest): Promise<IssueRequest> {
-    const supabase = this.db.getSupabase();
-    if (!supabase) throw new Error('Supabase client is not initialized.');
-
+    const supabase = this.db.requireSupabase();
     const { data, error } = await supabase
       .from('issue_requests')
       .insert({
@@ -36,20 +45,20 @@ export class IssueRequestRepository implements ITTLPersistenceDelegate {
         expires_at: request.getExpiresAt().toISOString(),
         approved_by_id: request.getApprovedById()
       })
-      .select()
+      .select('*')
       .single();
 
     if (error) {
       throw new Error(`Failed to insert issue request: ${error.message}`);
     }
-
     return this.mapRowToEntity(data);
   }
 
   public async findById(id: string): Promise<IssueRequest | null> {
-    const supabase = this.db.getSupabase();
-    if (!supabase) throw new Error('Supabase client is not initialized.');
-
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) {
+      return null;
+    }
+    const supabase = this.db.requireSupabase();
     const { data, error } = await supabase
       .from('issue_requests')
       .select('*')
@@ -59,15 +68,11 @@ export class IssueRequestRepository implements ITTLPersistenceDelegate {
     if (error) {
       throw new Error(`Failed to find issue request ${id}: ${error.message}`);
     }
-    if (!data) return null;
-
-    return this.mapRowToEntity(data);
+    return data ? this.mapRowToEntity(data) : null;
   }
 
   public async findPending(): Promise<IssueRequest[]> {
-    const supabase = this.db.getSupabase();
-    if (!supabase) throw new Error('Supabase client is not initialized.');
-
+    const supabase = this.db.requireSupabase();
     const nowIso = new Date().toISOString();
     const { data, error } = await supabase
       .from('issue_requests')
@@ -79,34 +84,45 @@ export class IssueRequestRepository implements ITTLPersistenceDelegate {
     if (error) {
       throw new Error(`Failed to fetch pending requests: ${error.message}`);
     }
-
     return (data || []).map((row) => this.mapRowToEntity(row));
   }
 
-  public async markRequestTimedOut(requestId: string): Promise<boolean> {
-    const supabase = this.db.getSupabase();
-    if (!supabase) throw new Error('Supabase client is not initialized.');
+  public async findAllPendingStatus(): Promise<IssueRequest[]> {
+    const supabase = this.db.requireSupabase();
+    const { data, error } = await supabase
+      .from('issue_requests')
+      .select('*')
+      .eq('status', 'PENDING')
+      .order('created_at', { ascending: true });
 
-    // Only transition if currently PENDING
+    if (error) {
+      throw new Error(`Failed to fetch all PENDING requests for recovery: ${error.message}`);
+    }
+    return (data || []).map((row) => this.mapRowToEntity(row));
+  }
+
+  public async findAllPendingUnexpiredOrOverdue(): Promise<IssueRequest[]> {
+    return this.findAllPendingStatus();
+  }
+
+  public async markRequestTimedOut(requestId: string): Promise<boolean> {
+    const supabase = this.db.requireSupabase();
     const { data, error } = await supabase
       .from('issue_requests')
       .update({ status: 'TIMED_OUT' })
       .eq('id', requestId)
       .eq('status', 'PENDING')
-      .select();
+      .select('id');
 
     if (error) {
       console.error(`Error marking request ${requestId} timed out:`, error);
       return false;
     }
-
     return Array.isArray(data) && data.length > 0;
   }
 
   public async countTrailingTimeoutsLastHour(studentId: string): Promise<number> {
-    const supabase = this.db.getSupabase();
-    if (!supabase) throw new Error('Supabase client is not initialized.');
-
+    const supabase = this.db.requireSupabase();
     const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
 
     const { count, error } = await supabase
@@ -119,21 +135,18 @@ export class IssueRequestRepository implements ITTLPersistenceDelegate {
     if (error) {
       throw new Error(`Failed to count trailing strikes: ${error.message}`);
     }
-
     return count ?? 0;
   }
 
   public async applyStudentPenalty(studentId: string, penaltyUntil: Date): Promise<void> {
-    const supabase = this.db.getSupabase();
-    if (!supabase) throw new Error('Supabase client is not initialized.');
-
+    const supabase = this.db.requireSupabase();
     const { error } = await supabase
       .from('users')
       .update({ penalty_until: penaltyUntil.toISOString() })
       .eq('id', studentId);
 
     if (error) {
-      throw new Error(`Failed to apply 5h cooldown penalty to ${studentId}: ${error.message}`);
+      throw new Error(`Failed to apply cooldown penalty to ${studentId}: ${error.message}`);
     }
   }
 

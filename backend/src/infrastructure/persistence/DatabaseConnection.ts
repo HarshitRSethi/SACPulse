@@ -5,10 +5,8 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 /**
- * DatabaseConnection
- * Manages database access to Supabase PostgreSQL.
- * Supports connection pooling, transactions, row-level locking (SELECT ... FOR UPDATE),
- * and client-level queries.
+ * DatabaseConnection (Infrastructure Singleton)
+ * Encapsulates Supabase HTTPS Data/RPC client and optional PostgreSQL connection pool.
  */
 export class DatabaseConnection {
   private static instance: DatabaseConnection | null = null;
@@ -42,7 +40,7 @@ export class DatabaseConnection {
 
   private initSupabaseClient(): void {
     const url = process.env.SUPABASE_URL;
-    const anonKey = process.env.SUPABASE_ANON_KEY;
+    const anonKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY;
     if (url && anonKey) {
       this.supabaseClient = createClient(url, anonKey);
     }
@@ -53,6 +51,15 @@ export class DatabaseConnection {
   }
 
   public getSupabase(): SupabaseClient | null {
+    return this.supabaseClient;
+  }
+
+  public requireSupabase(): SupabaseClient {
+    if (!this.supabaseClient) {
+      throw new Error(
+        'Supabase client is not initialized. Verify SUPABASE_URL and SUPABASE_ANON_KEY.'
+      );
+    }
     return this.supabaseClient;
   }
 
@@ -68,13 +75,7 @@ export class DatabaseConnection {
     return this.pool.query<T>(text, params);
   }
 
-  /**
-   * Executes a database operation within an explicit transaction.
-   * Enables strict isolation and SELECT ... FOR UPDATE row locking.
-   */
-  public async transaction<T>(
-    callback: (client: PoolClient) => Promise<T>
-  ): Promise<T> {
+  public async transaction<T>(callback: (client: PoolClient) => Promise<T>): Promise<T> {
     if (!this.pool) {
       throw new Error(
         'PostgreSQL connection pool is not configured. Set DATABASE_URL with valid credentials.'
@@ -101,3 +102,4 @@ export class DatabaseConnection {
     }
   }
 }
+
