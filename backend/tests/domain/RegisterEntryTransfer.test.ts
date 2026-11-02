@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { RegisterEntry } from '../../src/domain.entities/RegisterEntry.js';
-import { Student } from '../../src/domain.entities/User.js';
+import { RegisterEntry } from '../../src/domain/entities/RegisterEntry.js';
+import { Student } from '../../src/domain/entities/User.js';
 
 describe('RegisterEntry Atomic Transfer State Transitions', () => {
   const studentA = new Student('s-1', 'Student A', 'studenta@iiita.ac.in', 'IIT2023001', '9876543210');

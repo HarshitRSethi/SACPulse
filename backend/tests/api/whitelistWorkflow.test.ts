@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import http from 'http';
 import { createApp } from '../../src/presentation/app.js';
-import { DatabaseConnection } from '../../src/infrastructure.persistence/DatabaseConnection.js';
-import { generateSessionToken } from '../../src/controllers/AuthController.js';
+import { DatabaseConnection } from '../../src/infrastructure/persistence/DatabaseConnection.js';
+import { generateSessionToken } from '../../src/application/services/JwtTokenService.js';
 
 describe('Whitelist Request, Approval & Revocation Workflow Integration Tests', () => {
   let server: http.Server;
@@ -37,7 +37,7 @@ describe('Whitelist Request, Approval & Revocation Workflow Integration Tests', 
 
     await new Promise<void>((resolve) => {
       server.listen(0, '127.0.0.1', () => {
-        const addr = server.address() as any;
+        const addr = server.address() as { port: number };
         baseUrl = `http://127.0.0.1:${addr.port}`;
         resolve();
       });
@@ -45,13 +45,20 @@ describe('Whitelist Request, Approval & Revocation Workflow Integration Tests', 
   });
 
   afterAll(async () => {
-    // Cleanup generated test data
-    const db = DatabaseConnection.getInstance();
-    const supabase = db.getSupabase();
-    if (supabase) {
-      await supabase.from('whitelist_requests').delete().in('email', [testEmail1, testEmail2]);
-      await supabase.from('whitelisted_staff').delete().in('email', [testEmail1, testEmail2, testDirectEmail]);
-      await supabase.from('users').delete().in('email', [testEmail1, testEmail2, testDirectEmail]);
+    if (process.env.PERSISTENCE_DRIVER !== 'memory') {
+      const db = DatabaseConnection.getInstance();
+      const supabase = db.getSupabase();
+      if (supabase) {
+        await supabase.from('whitelist_requests').delete().in('email', [testEmail1, testEmail2]);
+        await supabase
+          .from('whitelisted_staff')
+          .delete()
+          .in('email', [testEmail1, testEmail2, testDirectEmail]);
+        await supabase
+          .from('users')
+          .delete()
+          .in('email', [testEmail1, testEmail2, testDirectEmail]);
+      }
     }
 
     await new Promise<void>((resolve, reject) => {
@@ -59,7 +66,6 @@ describe('Whitelist Request, Approval & Revocation Workflow Integration Tests', 
     });
   });
 
-  // 1. Validation & Submitting Whitelist Request
   describe('POST /api/auth/request-whitelist', () => {
     it('should reject invalid 10-digit Indian mobile numbers with 400 Bad Request', async () => {
       const res = await fetch(`${baseUrl}/api/auth/request-whitelist`, {
@@ -68,7 +74,7 @@ describe('Whitelist Request, Approval & Revocation Workflow Integration Tests', 
         body: JSON.stringify({
           email: testEmail1,
           name: 'Visiting Scholar Dr. Rao',
-          mobileNo: '1234567890', // starts with 1
+          mobileNo: '1234567890',
           reason: 'Conducting guest seminars'
         })
       });
@@ -120,10 +126,11 @@ describe('Whitelist Request, Approval & Revocation Workflow Integration Tests', 
     });
   });
 
-  // 2. Querying Whitelist Status
   describe('GET /api/auth/whitelist-status', () => {
     it('should return PENDING status for requested email', async () => {
-      const res = await fetch(`${baseUrl}/api/auth/whitelist-status?email=${encodeURIComponent(testEmail1)}`);
+      const res = await fetch(
+        `${baseUrl}/api/auth/whitelist-status?email=${encodeURIComponent(testEmail1)}`
+      );
       expect(res.status).toBe(200);
       const json = await res.json();
       expect(json.success).toBe(true);
@@ -132,7 +139,9 @@ describe('Whitelist Request, Approval & Revocation Workflow Integration Tests', 
     });
 
     it('should return NOT_FOUND for unknown email', async () => {
-      const res = await fetch(`${baseUrl}/api/auth/whitelist-status?email=random.unknown@gmail.com`);
+      const res = await fetch(
+        `${baseUrl}/api/auth/whitelist-status?email=random.unknown@gmail.com`
+      );
       expect(res.status).toBe(200);
       const json = await res.json();
       expect(json.success).toBe(true);
@@ -140,28 +149,33 @@ describe('Whitelist Request, Approval & Revocation Workflow Integration Tests', 
     });
   });
 
-  // 3. Admin Listing Whitelist
   describe('GET /api/admin/whitelist', () => {
-    it('should return pending requests and active users', async () => {
-      const res = await fetch(`${baseUrl}/api/admin/whitelist`);
+    it('should return pending requests and active users when authenticated as ADMIN', async () => {
+      const res = await fetch(`${baseUrl}/api/admin/whitelist`, {
+        headers: { Authorization: `Bearer ${rootAdminToken}` }
+      });
       expect(res.status).toBe(200);
       const json = await res.json();
       expect(json.success).toBe(true);
       expect(Array.isArray(json.data.pendingRequests)).toBe(true);
       expect(Array.isArray(json.data.activeUsers)).toBe(true);
 
-      const foundReq1 = json.data.pendingRequests.find((r: any) => r.id === requestId1);
+      const foundReq1 = json.data.pendingRequests.find(
+        (r: { id: string; name: string }) => r.id === requestId1
+      );
       expect(foundReq1).toBeDefined();
       expect(foundReq1.name).toBe('Visiting Scholar Dr. Rao');
     });
   });
 
-  // 4. Admin Approving Whitelist as STUDENT / GUARD
-  describe('POST /api/admin/whitelist/approve', () => {
+  describe('POST /api/admin/whitelist/approve & /reject', () => {
     it('should approve testEmail1 as STUDENT', async () => {
       const res = await fetch(`${baseUrl}/api/admin/whitelist/approve`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${rootAdminToken}`
+        },
         body: JSON.stringify({
           requestId: requestId1,
           role: 'STUDENT'
@@ -175,8 +189,7 @@ describe('Whitelist Request, Approval & Revocation Workflow Integration Tests', 
       expect(json.data.request.approved_role).toBe('STUDENT');
       expect(json.data.user.role).toBe('STUDENT');
 
-      // Now verify that testEmail1 can authenticate via Google login
-      const loginRes = await fetch(`${baseUrl}/api/auth/google`, {
+      const loginRes = await fetch(`${baseUrl}/api/auth/demo-session`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -195,7 +208,10 @@ describe('Whitelist Request, Approval & Revocation Workflow Integration Tests', 
     it('should reject testEmail2 request when Admin clicks reject', async () => {
       const res = await fetch(`${baseUrl}/api/admin/whitelist/reject`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${rootAdminToken}`
+        },
         body: JSON.stringify({
           requestId: requestId2
         })
@@ -206,8 +222,7 @@ describe('Whitelist Request, Approval & Revocation Workflow Integration Tests', 
       expect(json.success).toBe(true);
       expect(json.data.request.status).toBe('REJECTED');
 
-      // Unapproved non-IIITA email should be rejected with 403 on Google login
-      const loginRes = await fetch(`${baseUrl}/api/auth/google`, {
+      const loginRes = await fetch(`${baseUrl}/api/auth/demo-session`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -223,8 +238,7 @@ describe('Whitelist Request, Approval & Revocation Workflow Integration Tests', 
     });
   });
 
-  // 5. Admin Direct Add & Revocation with Option A Security
-  describe('Direct Add & Revoke Whitelist Workflow (Option A Security)', () => {
+  describe('Direct Add & Revoke Whitelist Workflow (Root vs Delegated Admin Hierarchy)', () => {
     it('should reject delegated admin attempting to directly add an account as ADMIN with 403 Forbidden', async () => {
       const res = await fetch(`${baseUrl}/api/admin/whitelist/direct-add`, {
         method: 'POST',
@@ -243,7 +257,9 @@ describe('Whitelist Request, Approval & Revocation Workflow Integration Tests', 
       expect(res.status).toBe(403);
       const json = await res.json();
       expect(json.success).toBe(false);
-      expect(json.error).toContain('Only the primary institutional administrator can grant ADMIN role');
+      expect(json.error).toContain(
+        'Only the primary institutional administrator can grant ADMIN role'
+      );
     });
 
     it('should directly add an account as ADMIN when executed by Root Admin', async () => {
@@ -267,8 +283,7 @@ describe('Whitelist Request, Approval & Revocation Workflow Integration Tests', 
       expect(json.data.role).toBe('ADMIN');
       directStaffId = json.data.id;
 
-      // Google login succeeds as ADMIN
-      const loginRes = await fetch(`${baseUrl}/api/auth/google`, {
+      const loginRes = await fetch(`${baseUrl}/api/auth/demo-session`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -283,7 +298,6 @@ describe('Whitelist Request, Approval & Revocation Workflow Integration Tests', 
     });
 
     it('should prevent an admin from revoking their own account (Self-Revocation guard) with 400 Bad Request', async () => {
-      // Direct Admin Sharma attempts to revoke their own ID using their own token
       const sharmaToken = generateSessionToken({
         userId: 'sharma-id',
         email: testDirectEmail,
@@ -304,7 +318,6 @@ describe('Whitelist Request, Approval & Revocation Workflow Integration Tests', 
     });
 
     it('should reject delegated admin attempting to revoke another ADMIN account with 403 Forbidden', async () => {
-      // Delegated admin attempts to revoke Direct Admin Sharma
       const res = await fetch(`${baseUrl}/api/admin/whitelist/${directStaffId}`, {
         method: 'DELETE',
         headers: {
@@ -315,22 +328,24 @@ describe('Whitelist Request, Approval & Revocation Workflow Integration Tests', 
       expect(res.status).toBe(403);
       const json = await res.json();
       expect(json.success).toBe(false);
-      expect(json.error).toContain('Only the primary institutional administrator can revoke an ADMIN account');
+      expect(json.error).toContain(
+        'Only the primary institutional administrator can revoke an ADMIN account'
+      );
     });
 
     it('should allow Root Admin to revoke access and immediately block future logins with 403 Forbidden', async () => {
-      // Find staff ID for testEmail1 in active whitelist
       const listRes = await fetch(`${baseUrl}/api/admin/whitelist`, {
         headers: { Authorization: `Bearer ${rootAdminToken}` }
       });
       const listJson = await listRes.json();
       expect(listJson.data.initialAdminEmail).toBeDefined();
 
-      const staff1 = listJson.data.activeUsers.find((u: any) => u.email === testEmail1.toLowerCase());
+      const staff1 = listJson.data.activeUsers.find(
+        (u: { id: string; email: string }) => u.email === testEmail1.toLowerCase()
+      );
       expect(staff1).toBeDefined();
       approvedStaffId = staff1.id;
 
-      // Revoke access as Root Admin
       const delRes = await fetch(`${baseUrl}/api/admin/whitelist/${approvedStaffId}`, {
         method: 'DELETE',
         headers: {
@@ -341,8 +356,7 @@ describe('Whitelist Request, Approval & Revocation Workflow Integration Tests', 
       const delJson = await delRes.json();
       expect(delJson.success).toBe(true);
 
-      // Now Google login should fail with 403 Forbidden
-      const loginRes = await fetch(`${baseUrl}/api/auth/google`, {
+      const loginRes = await fetch(`${baseUrl}/api/auth/demo-session`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

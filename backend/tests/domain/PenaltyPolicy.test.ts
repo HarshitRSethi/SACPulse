@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { PenaltyAndEligibilityPolicy } from '../../src/domain.services/PenaltyAndEligibilityPolicy.js';
-import { Student } from '../../src/domain.entities/User.js';
+import { PenaltyAndEligibilityPolicy } from '../../src/domain/strategies/IPenaltyStrategy.js';
+import { Student } from '../../src/domain/entities/User.js';
 
 describe('PenaltyAndEligibilityPolicy: 3 Strikes in 1 Hour -> 5-Hour Cooldown', () => {
   const policy = new PenaltyAndEligibilityPolicy();

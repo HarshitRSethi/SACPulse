@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { IssueRequestTTLScheduler, type ITTLPersistenceDelegate } from '../../src/domain.services/IssueRequestTTLScheduler.js';
-import { RealtimeEventHub } from '../../src/domain.services/RealtimeEventHub.js';
-import { IssueRequest } from '../../src/domain.entities/IssueRequest.js';
+import { IssueRequestTTLScheduler, type ITTLPersistenceDelegate } from '../../src/application/services/IssueRequestTTLScheduler.js';
+import { RealtimeEventHub } from '../../src/application/services/RealtimeEventHub.js';
+import { IssueRequest } from '../../src/domain/entities/IssueRequest.js';
 
 describe('IssueRequestTTLScheduler (Authoritative 120-Second Server Clock TTL)', () => {
   let scheduler: IssueRequestTTLScheduler;

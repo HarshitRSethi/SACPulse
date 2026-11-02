@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { RegisterEntry } from '../../src/domain.entities/RegisterEntry.js';
-import { Student, Guard, Admin } from '../../src/domain.entities/User.js';
-import { SportsEquipment, RoomKey } from '../../src/domain.entities/SACItem.js';
+import { RegisterEntry } from '../../src/domain/entities/RegisterEntry.js';
+import { Student, Guard, Admin } from '../../src/domain/entities/User.js';
+import { SportsEquipment, RoomKey } from '../../src/domain/entities/SACItem.js';
 
 describe('closeOnGuardReturn: Wiping pendingTransferToId & Defaulter Enforcement', () => {
   const studentA = new Student('s-1', 'Student A', 'studenta@iiita.ac.in', 'IIT2023001', '9876543210');

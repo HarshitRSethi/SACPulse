@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { SACItem, SportsEquipment, RoomKey } from '../../src/domain.entities/SACItem.js';
+import { SACItem, SportsEquipment, RoomKey } from '../../src/domain/entities/SACItem.js';
 
 describe('SACItem Polymorphism & Stock Allocation', () => {
   describe('SportsEquipment', () => {

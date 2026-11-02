@@ -1,23 +1,42 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import http from 'http';
 import { createApp } from '../../src/presentation/app.js';
-import { DatabaseConnection } from '../../src/infrastructure.persistence/DatabaseConnection.js';
+import type {
+  IGoogleTokenVerifier,
+  VerifiedGoogleIdentity
+} from '../../src/application/services/AuthService.js';
+import { AuthenticationException } from '../../src/domain/exceptions/DomainException.js';
+import { DatabaseConnection } from '../../src/infrastructure/persistence/DatabaseConnection.js';
 
-describe('SACPulse Auth & Whitelist Roles Integration Tests (Part 1B)', () => {
+class MockGoogleTokenVerifier implements IGoogleTokenVerifier {
+  public async verifyCredential(credential: string): Promise<VerifiedGoogleIdentity> {
+    if (!credential.startsWith('mock-google:')) {
+      throw new AuthenticationException('Google authentication failed: Invalid ID token signature');
+    }
+    const [, email, name] = credential.split(':');
+    if (!email) {
+      throw new AuthenticationException('Google authentication failed: Missing email claim');
+    }
+    return { email, name: name || undefined };
+  }
+}
+
+describe('SACPulse Auth, Signed HS256 JWT & Whitelist Roles Integration Tests', () => {
   let server: http.Server;
   let baseUrl: string;
   const testStudentEmail = `test.student.${Date.now()}@iiita.ac.in`;
   const testGuardEmail = 'guard.sac.iiita@gmail.com';
   let studentToken: string;
-  let studentUserId: string;
 
   beforeAll(async () => {
-    const app = createApp();
+    const app = createApp({
+      googleVerifier: new MockGoogleTokenVerifier()
+    });
     server = http.createServer(app);
 
     await new Promise<void>((resolve) => {
       server.listen(0, '127.0.0.1', () => {
-        const addr = server.address() as any;
+        const addr = server.address() as { port: number };
         baseUrl = `http://127.0.0.1:${addr.port}`;
         resolve();
       });
@@ -25,11 +44,12 @@ describe('SACPulse Auth & Whitelist Roles Integration Tests (Part 1B)', () => {
   });
 
   afterAll(async () => {
-    // Cleanup generated test user
-    const db = DatabaseConnection.getInstance();
-    const supabase = db.getSupabase();
-    if (supabase) {
-      await supabase.from('users').delete().eq('email', testStudentEmail);
+    if (process.env.PERSISTENCE_DRIVER !== 'memory') {
+      const db = DatabaseConnection.getInstance();
+      const supabase = db.getSupabase();
+      if (supabase) {
+        await supabase.from('users').delete().eq('email', testStudentEmail);
+      }
     }
 
     await new Promise<void>((resolve, reject) => {
@@ -37,14 +57,28 @@ describe('SACPulse Auth & Whitelist Roles Integration Tests (Part 1B)', () => {
     });
   });
 
-  // 1. @iiita.ac.in auto-creates Student with parsed Roll No
-  it('POST /api/auth/google should auto-create Student with parsed Roll No for @iiita.ac.in emails (Rule 1)', async () => {
+  it('POST /api/auth/google should reject raw email payloads without a cryptographic Google credential (400)', async () => {
     const res = await fetch(`${baseUrl}/api/auth/google`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         email: testStudentEmail,
-        name: 'New College Student'
+        name: 'Spoofed Raw Email'
+      })
+    });
+
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.success).toBe(false);
+    expect(body.error).toMatch(/credential token is required/i);
+  });
+
+  it('POST /api/auth/google should auto-create Student with parsed Roll No for verified @iiita.ac.in credentials (Rule 1)', async () => {
+    const res = await fetch(`${baseUrl}/api/auth/google`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        credential: `mock-google:${testStudentEmail}:New College Student`
       })
     });
 
@@ -53,6 +87,8 @@ describe('SACPulse Auth & Whitelist Roles Integration Tests (Part 1B)', () => {
     expect(body.success).toBe(true);
     expect(body.data).toBeDefined();
     expect(body.data.token).toBeDefined();
+    // Verify 3-segment signed JWT structure (header.payload.signature)
+    expect(body.data.token.split('.')).toHaveLength(3);
 
     const expectedRollNo = testStudentEmail.split('@')[0].toUpperCase();
     expect(body.data.user.role).toBe('STUDENT');
@@ -63,17 +99,14 @@ describe('SACPulse Auth & Whitelist Roles Integration Tests (Part 1B)', () => {
     expect(body.data.requiresMobileSetup).toBe(true);
 
     studentToken = body.data.token;
-    studentUserId = body.data.user.id;
   });
 
-  // 2. Whitelisted email receives their exact assigned role ('GUARD' or 'ADMIN')
   it('POST /api/auth/google should assign exact whitelisted role for non-iiita staff accounts (Rule 2)', async () => {
     const res = await fetch(`${baseUrl}/api/auth/google`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        email: testGuardEmail,
-        name: 'SAC Guard Ramesh'
+        credential: `mock-google:${testGuardEmail}:SAC Guard Ramesh`
       })
     });
 
@@ -85,14 +118,12 @@ describe('SACPulse Auth & Whitelist Roles Integration Tests (Part 1B)', () => {
     expect(body.data.token).toBeDefined();
   });
 
-  // 3. Unwhitelisted external email returns 403 Forbidden
   it('POST /api/auth/google should reject unwhitelisted external emails with 403 Forbidden', async () => {
     const res = await fetch(`${baseUrl}/api/auth/google`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        email: 'unauthorized.external@gmail.com',
-        name: 'Intruder'
+        credential: 'mock-google:unauthorized.external@gmail.com:Intruder'
       })
     });
 
@@ -102,7 +133,6 @@ describe('SACPulse Auth & Whitelist Roles Integration Tests (Part 1B)', () => {
     expect(body.error).toBe('Access restricted to @iiita.ac.in or whitelisted accounts');
   });
 
-  // 3b. Invalid Google ID token credential returns 401 Unauthorized
   it('POST /api/auth/google should reject invalid Google credential token with 401 Unauthorized', async () => {
     const res = await fetch(`${baseUrl}/api/auth/google`, {
       method: 'POST',
@@ -118,7 +148,23 @@ describe('SACPulse Auth & Whitelist Roles Integration Tests (Part 1B)', () => {
     expect(body.error).toContain('Google authentication failed');
   });
 
-  // 4. Mobile setup updates phone number and rejects invalid inputs
+  it('POST /api/auth/demo-session should issue a signed JWT in non-production demo mode', async () => {
+    const res = await fetch(`${baseUrl}/api/auth/demo-session`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email: testGuardEmail,
+        name: 'SAC Guard Ramesh'
+      })
+    });
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.success).toBe(true);
+    expect(body.data.user.role).toBe('GUARD');
+    expect(body.data.token.split('.')).toHaveLength(3);
+  });
+
   describe('PATCH /api/auth/mobile-setup', () => {
     it('should reject requests without authentication with 401 Unauthorized', async () => {
       const res = await fetch(`${baseUrl}/api/auth/mobile-setup`, {
@@ -130,11 +176,10 @@ describe('SACPulse Auth & Whitelist Roles Integration Tests (Part 1B)', () => {
       expect(res.status).toBe(401);
       const body = await res.json();
       expect(body.success).toBe(false);
-      expect(body.error).toContain('Unauthorized');
+      expect(body.error).toMatch(/Authentication required|Unauthorized/i);
     });
 
     it('should reject invalid mobile numbers (non-Indian format) with 400 Bad Request', async () => {
-      // Invalid lengths or starting digits
       const invalidNumbers = ['12345', '1234567890', '987654321', '98765432101', 'abcdefghij'];
 
       for (const num of invalidNumbers) {
@@ -176,13 +221,12 @@ describe('SACPulse Auth & Whitelist Roles Integration Tests (Part 1B)', () => {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          email: testStudentEmail,
-          name: 'New College Student'
+          credential: `mock-google:${testStudentEmail}:New College Student`
         })
       });
 
       const loginBody = await loginRes.json();
-      expect(loginBody.status || loginRes.status).toBe(200);
+      expect(loginRes.status).toBe(200);
       expect(loginBody.data.user.mobileNo).toBe(validMobile);
       expect(loginBody.data.requiresMobileSetup).toBe(false);
     });
