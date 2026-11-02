@@ -1,6 +1,6 @@
 import React from 'react';
 import type { SACItem } from '../../types/index';
-import { ArrowRight, Trash2 } from 'lucide-react';
+import { ArrowRight, X } from 'lucide-react';
 
 interface SelectedItemInfo {
   item: SACItem;
@@ -25,38 +25,29 @@ export const StickyIssueBar: React.FC<StickyIssueBarProps> = ({
   if (totalCount === 0) return null;
 
   return (
-    <div className="fixed bottom-6 inset-x-0 z-40 flex justify-center px-4 pointer-events-none">
-      <div className="pointer-events-auto bg-zinc-900/95 backdrop-blur-md text-white pl-4 pr-3 py-2.5 rounded-full shadow-2xl border border-zinc-800 flex items-center gap-3 animate-in slide-in-from-bottom-6 duration-200 hover:shadow-zinc-900/20 transition-all max-w-md w-full sm:w-auto">
-        {/* Count badge */}
-        <div className="flex items-center gap-2">
-          <span className="w-6 h-6 rounded-full bg-blue-600 text-white font-mono font-bold text-xs flex items-center justify-center flex-shrink-0">
-            {totalCount}
-          </span>
-          <span className="text-xs sm:text-sm font-semibold tracking-tight whitespace-nowrap">
-            {totalCount} item{totalCount > 1 ? 's' : ''} selected
-          </span>
-        </div>
+    <div className="fixed bottom-5 inset-x-0 z-40 flex justify-center px-4 pointer-events-none">
+      <div className="pointer-events-auto bg-zinc-900 text-white pl-3.5 pr-2.5 py-2 rounded-lg shadow-xl border border-zinc-800 flex items-center gap-3">
+        <span className="text-xs font-medium tabular-nums">
+          <strong className="font-mono">{totalCount}</strong> unit
+          {totalCount > 1 ? 's' : ''} selected
+        </span>
 
-        <span className="text-zinc-500">•</span>
-
-        {/* Proceed Button */}
         <button
           onClick={onOpenConfirmModal}
           disabled={disabled}
-          className="flex-1 sm:flex-none px-4 py-2 rounded-full text-xs sm:text-sm font-bold bg-white text-zinc-900 hover:bg-zinc-100 active:scale-95 transition flex items-center justify-center gap-1.5 shadow-sm disabled:opacity-50"
+          className="px-3 py-1.5 rounded-md text-xs font-semibold bg-white text-zinc-900 hover:bg-zinc-100 transition inline-flex items-center gap-1.5 disabled:opacity-50"
         >
-          <span>Proceed to Issue</span>
+          <span>Review checkout</span>
           <ArrowRight className="w-3.5 h-3.5" />
         </button>
 
-        {/* Clear selection icon */}
         <button
           onClick={onClear}
-          className="p-1.5 text-zinc-400 hover:text-rose-400 hover:bg-zinc-800 rounded-full transition"
-          title="Clear Selection"
+          className="p-1 text-zinc-400 hover:text-white rounded transition"
+          title="Clear selection"
           aria-label="Clear selection"
         >
-          <Trash2 className="w-3.5 h-3.5" />
+          <X className="w-3.5 h-3.5" />
         </button>
       </div>
     </div>

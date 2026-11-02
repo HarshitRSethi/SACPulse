@@ -1,5 +1,11 @@
-import React, { useState, useEffect } from 'react';
-import type { User, SACItem, IssueRequest, RegisterEntryUnit, IncomingTransfer } from '../../types/index';
+import React, { useState, useEffect, useCallback } from 'react';
+import type {
+  IncomingTransfer,
+  IssueRequest,
+  RegisterEntryUnit,
+  SACItem,
+  User
+} from '../../types/index';
 import { api } from '../../services/api';
 import { socketService } from '../../services/socket';
 import { StudentBanners } from './StudentBanners';
@@ -8,7 +14,7 @@ import { ActiveHoldingsList } from './ActiveHoldingsList';
 import { LiveCampusFeed } from './LiveCampusFeed';
 import { StickyIssueBar } from './StickyIssueBar';
 import { IssueConfirmModal } from './IssueConfirmModal';
-import { RefreshCw, Check } from 'lucide-react';
+import { Check, RefreshCw } from 'lucide-react';
 
 interface StudentDashboardProps {
   currentUser: User;
@@ -30,24 +36,23 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
   const [showRefreshedCheck, setShowRefreshedCheck] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  // Load Inventory, Holdings, Incoming Transfers, and Pending Requests
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     try {
       setErrorMsg(null);
-      const [inventoryData, holdingsData, transfersData, pendingRequests] = await Promise.all([
-        api.getInventory(),
-        api.getStudentHoldings(currentUser.id),
-        api.getIncomingTransfers(currentUser.id),
-        api.getPendingRequests()
-      ]);
+      const [inventoryData, holdingsData, transfersData, myPendingList] =
+        await Promise.all([
+          api.getInventory(),
+          api.getStudentHoldings(currentUser.id),
+          api.getIncomingTransfers(currentUser.id),
+          api.getMyPendingRequests()
+        ]);
 
       setItems(inventoryData);
       setHoldings(holdingsData);
       setIncomingTransfers(transfersData);
 
-      // Check if this student has an active pending request (strictly unexpired)
       const now = Date.now();
-      const myPending = pendingRequests.find(
+      const myPending = myPendingList.find(
         (r) =>
           r.studentId === currentUser.id &&
           r.status === 'PENDING' &&
@@ -55,10 +60,9 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
       );
       setPendingRequest(myPending || null);
     } catch (err: any) {
-      console.error('Failed to load student dashboard data:', err);
-      setErrorMsg(err.message || 'Failed to load SAC data');
+      setErrorMsg(err.message || 'Failed to load SAC inventory data.');
     }
-  };
+  }, [currentUser.id]);
 
   const handleManualRefresh = async () => {
     try {
@@ -73,50 +77,47 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
   useEffect(() => {
     loadData();
-    // Join student socket room
     socketService.joinStudent(currentUser.id);
 
-    // Socket real-time listeners
     const socket = socketService.socket;
-    if (socket) {
-      const handleInventoryUpdated = () => {
-        api.getInventory().then(setItems).catch(console.error);
-      };
+    if (!socket) return;
 
-      const handleQueueUpdated = () => {
+    const handleInventoryUpdated = () => {
+      api.getInventory().then(setItems).catch(console.error);
+    };
+
+    const handleQueueUpdated = () => {
+      loadData();
+    };
+
+    const handleTransferChanged = () => {
+      api.getIncomingTransfers(currentUser.id).then(setIncomingTransfers).catch(console.error);
+      api.getStudentHoldings(currentUser.id).then(setHoldings).catch(console.error);
+    };
+
+    const handleRequestTimedOut = (data: { requestId: string; studentId: string }) => {
+      if (data.studentId === currentUser.id) {
+        setPendingRequest(null);
         loadData();
-      };
+        onRefreshUser();
+      }
+    };
 
-      const handleTransferChanged = () => {
-        api.getIncomingTransfers(currentUser.id).then(setIncomingTransfers).catch(console.error);
-        api.getStudentHoldings(currentUser.id).then(setHoldings).catch(console.error);
-      };
+    socket.on('inventory:updated', handleInventoryUpdated);
+    socket.on('guard:queue_updated', handleQueueUpdated);
+    socket.on('transfer:state_changed', handleTransferChanged);
+    socket.on('guard:register_swapped', handleTransferChanged);
+    socket.on('request:timed_out', handleRequestTimedOut);
 
-      const handleRequestTimedOut = (data: { requestId: string; studentId: string }) => {
-        if (data.studentId === currentUser.id) {
-          setPendingRequest(null);
-          loadData();
-          onRefreshUser(); // update penalty status if strikes > 3
-        }
-      };
+    return () => {
+      socket.off('inventory:updated', handleInventoryUpdated);
+      socket.off('guard:queue_updated', handleQueueUpdated);
+      socket.off('transfer:state_changed', handleTransferChanged);
+      socket.off('guard:register_swapped', handleTransferChanged);
+      socket.off('request:timed_out', handleRequestTimedOut);
+    };
+  }, [currentUser.id, loadData, onRefreshUser]);
 
-      socket.on('inventory:updated', handleInventoryUpdated);
-      socket.on('guard:queue_updated', handleQueueUpdated);
-      socket.on('transfer:state_changed', handleTransferChanged);
-      socket.on('guard:register_swapped', handleTransferChanged);
-      socket.on('request:timed_out', handleRequestTimedOut);
-
-      return () => {
-        socket.off('inventory:updated', handleInventoryUpdated);
-        socket.off('guard:queue_updated', handleQueueUpdated);
-        socket.off('transfer:state_changed', handleTransferChanged);
-        socket.off('guard:register_swapped', handleTransferChanged);
-        socket.off('request:timed_out', handleRequestTimedOut);
-      };
-    }
-  }, [currentUser.id]);
-
-  // Handle Steppers
   const handleIncrement = (item: SACItem) => {
     setSelectedCounts((prev) => {
       const current = prev[item.id] || 0;
@@ -137,17 +138,13 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
     });
   };
 
-  const handleClearSelection = () => {
-    setSelectedCounts({});
-  };
+  const selectedItemsList = Object.entries(selectedCounts)
+    .map(([itemId, qty]) => ({
+      item: items.find((i) => i.id === itemId)!,
+      qty
+    }))
+    .filter((s) => Boolean(s.item));
 
-  // Convert selected map to list for modal & sticky bar
-  const selectedItemsList = Object.entries(selectedCounts).map(([itemId, qty]) => {
-    const item = items.find((i) => i.id === itemId)!;
-    return { item, qty };
-  }).filter((s) => Boolean(s.item));
-
-  // Submit Issue Request
   const handleConfirmIssue = async () => {
     try {
       setIsLoading(true);
@@ -162,16 +159,14 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
       setPendingRequest(newRequest);
       setSelectedCounts({});
       setIsConfirmModalOpen(false);
-      // Reload inventory & user
       await loadData();
     } catch (err: any) {
-      setErrorMsg(err.message || 'Failed to submit issue request');
+      setErrorMsg(err.message || 'Failed to submit issue request.');
     } finally {
       setIsLoading(false);
     }
   };
 
-  // Transfer Actions
   const handleInitiateTransfer = async (entryId: string, recipientRollNo: string) => {
     await api.initiateTransfer(entryId, currentUser.id, recipientRollNo);
     await loadData();
@@ -187,7 +182,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
       await api.respondTransfer(entryId, currentUser.id, 'ACCEPT');
       await loadData();
     } catch (err: any) {
-      setErrorMsg(err.message || 'Failed to accept transfer');
+      setErrorMsg(err.message || 'Failed to accept transfer.');
     }
   };
 
@@ -196,56 +191,53 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
       await api.respondTransfer(entryId, currentUser.id, 'REJECT');
       await loadData();
     } catch (err: any) {
-      setErrorMsg(err.message || 'Failed to decline transfer');
+      setErrorMsg(err.message || 'Failed to decline transfer.');
     }
   };
 
-  const isBlocked = currentUser.isDefaulter || Boolean(currentUser.penaltyUntil && new Date(currentUser.penaltyUntil) > new Date());
+  const isBlocked =
+    currentUser.isDefaulter ||
+    Boolean(
+      currentUser.penaltyUntil && new Date(currentUser.penaltyUntil) > new Date()
+    );
 
   return (
-    <div className="max-w-5xl mx-auto px-4 py-6 space-y-6 pb-28">
-      {/* Student Welcome Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+    <div className="max-w-5xl mx-auto px-4 py-6 space-y-5 pb-24">
+      <div className="flex items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl sm:text-3xl font-extrabold text-zinc-900 tracking-tight flex items-center gap-2">
-            Student Dashboard
+          <h1 className="text-lg font-semibold text-zinc-900 tracking-tight">
+            Campus Equipment & Room Status
           </h1>
-          <p className="text-xs sm:text-sm text-zinc-500 mt-0.5">
-            Logged in as <strong className="text-zinc-800">{currentUser.name}</strong> ({currentUser.rollNo})
+          <p className="text-xs text-zinc-500">
+            {currentUser.name} · <span className="font-mono">{currentUser.rollNo}</span>
           </p>
         </div>
 
         <button
           onClick={handleManualRefresh}
           disabled={isRefreshing}
-          className={`self-start sm:self-auto px-3.5 py-1.5 rounded-xl text-xs font-semibold border shadow-xs transition-all flex items-center gap-1.5 active:scale-95 ${
-            showRefreshedCheck
-              ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
-              : 'bg-white hover:bg-zinc-50 text-zinc-700 border-[#E4E4E7]'
-          }`}
+          className="px-3 py-1.5 rounded-md text-xs font-medium border border-zinc-200 bg-white hover:bg-zinc-50 text-zinc-700 transition inline-flex items-center gap-1.5"
         >
           {showRefreshedCheck ? (
             <>
               <Check className="w-3.5 h-3.5 text-emerald-600" />
-              <span>Refreshed ✓</span>
+              <span>Synced</span>
             </>
           ) : (
             <>
-              <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin text-blue-600' : ''}`} />
-              <span>{isRefreshing ? 'Refreshing...' : 'Refresh Status'}</span>
+              <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />
+              <span>Refresh</span>
             </>
           )}
         </button>
       </div>
 
-      {/* Global Error Banner */}
       {errorMsg && (
-        <div className="p-3.5 rounded-2xl bg-rose-50 border border-rose-200 text-rose-800 text-xs font-medium">
+        <div className="p-3 rounded-lg bg-red-50 border border-red-200 text-red-700 text-xs">
           {errorMsg}
         </div>
       )}
 
-      {/* Banners: Defaulter, Cooldown, Incoming Transfers */}
       <StudentBanners
         user={currentUser}
         incomingTransfers={incomingTransfers}
@@ -253,7 +245,6 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
         onDeclineTransfer={handleDeclineTransfer}
       />
 
-      {/* 2:00 Countdown Pending Request Tracker */}
       {pendingRequest && (
         <PendingRequestTracker
           request={pendingRequest}
@@ -265,7 +256,6 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
         />
       )}
 
-      {/* Active Holdings with Peer Transfer */}
       <ActiveHoldingsList
         holdings={holdings}
         currentStudentRollNo={currentUser.rollNo}
@@ -274,35 +264,21 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
         isLoading={isLoading}
       />
 
-      {/* Live Campus Feed: Equipment & Activity Rooms */}
-      <div className="pt-2 space-y-3">
-        <div>
-          <h2 className="text-lg font-bold text-zinc-900 tracking-tight">
-            Live Campus Feed
-          </h2>
-          <p className="text-xs text-zinc-500">
-            Real-time equipment availability and activity room occupancy status.
-          </p>
-        </div>
-
-        <LiveCampusFeed
-          items={items}
-          selectedCounts={selectedCounts}
-          onIncrement={handleIncrement}
-          onDecrement={handleDecrement}
-          disabled={isBlocked || Boolean(pendingRequest)}
-        />
-      </div>
-
-      {/* Sticky Bottom Bar */}
-      <StickyIssueBar
-        selectedItems={selectedItemsList}
-        onOpenConfirmModal={() => setIsConfirmModalOpen(true)}
-        onClear={handleClearSelection}
+      <LiveCampusFeed
+        items={items}
+        selectedCounts={selectedCounts}
+        onIncrement={handleIncrement}
+        onDecrement={handleDecrement}
         disabled={isBlocked || Boolean(pendingRequest)}
       />
 
-      {/* 2-Step Confirmation Modal */}
+      <StickyIssueBar
+        selectedItems={selectedItemsList}
+        onOpenConfirmModal={() => setIsConfirmModalOpen(true)}
+        onClear={() => setSelectedCounts({})}
+        disabled={isBlocked || Boolean(pendingRequest)}
+      />
+
       <IssueConfirmModal
         isOpen={isConfirmModalOpen}
         onClose={() => setIsConfirmModalOpen(false)}

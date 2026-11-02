@@ -1,9 +1,19 @@
-import type { SACItem, User, IssueRequest, ActiveBatch, IncomingTransfer } from '../types/index';
+import type {
+  ActiveBatch,
+  IncomingTransfer,
+  IssueRequest,
+  RegisterEntryUnit,
+  SACItem,
+  User
+} from '../types/index';
 
 const API_BASE = '/api';
 
 const TOKEN_KEY = 'sacpulse_auth_token';
 const USER_KEY = 'sacpulse_auth_user';
+
+type UnauthorizedHandler = () => void;
+let unauthorizedListener: UnauthorizedHandler | null = null;
 
 export const authStorage = {
   getToken(): string | null {
@@ -26,7 +36,7 @@ export const authStorage = {
       localStorage.setItem(TOKEN_KEY, token);
       localStorage.setItem(USER_KEY, JSON.stringify(user));
     } catch (e) {
-      console.error('Failed to save auth to localStorage:', e);
+      console.error('Failed to persist session to localStorage:', e);
     }
   },
   clearAuth(): void {
@@ -34,219 +44,174 @@ export const authStorage = {
       localStorage.removeItem(TOKEN_KEY);
       localStorage.removeItem(USER_KEY);
     } catch (e) {
-      console.error('Failed to clear auth from localStorage:', e);
+      console.error('Failed to clear session from localStorage:', e);
     }
+  },
+  onUnauthorized(listener: UnauthorizedHandler | null): void {
+    unauthorizedListener = listener;
   }
 };
 
-export const api = {
-  // Auth
-  async loginWithGoogle(
-    param: string | { credential?: string; email?: string; name?: string },
-    name?: string,
-    sub?: string
-  ): Promise<{ token: string; sessionToken: string; user: User; requiresMobileSetup: boolean }> {
-    const payload = typeof param === 'string'
-      ? { email: param, name, sub }
-      : param;
+interface RequestOptions {
+  method?: 'GET' | 'POST' | 'PATCH' | 'DELETE';
+  body?: unknown;
+  tokenOverride?: string;
+  skipAuthRedirect?: boolean;
+}
 
-    const res = await fetch(`${API_BASE}/auth/google`, {
+async function requestEnvelope<T = any>(
+  path: string,
+  options: RequestOptions = {}
+): Promise<{ data: T; raw: any }> {
+  const token = options.tokenOverride ?? authStorage.getToken();
+  const headers: Record<string, string> = {};
+
+  if (options.body !== undefined) {
+    headers['Content-Type'] = 'application/json';
+  }
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+
+  const res = await fetch(`${API_BASE}${path}`, {
+    method: options.method ?? 'GET',
+    headers,
+    body: options.body !== undefined ? JSON.stringify(options.body) : undefined
+  });
+
+  const json = await res.json().catch(() => ({
+    success: false,
+    error: `HTTP ${res.status} response`
+  }));
+
+  if (res.status === 401 && !options.skipAuthRedirect && authStorage.getToken()) {
+    authStorage.clearAuth();
+    unauthorizedListener?.();
+  }
+
+  if (!res.ok || !json.success) {
+    const err: any = new Error(json.error || `Request failed (${res.status})`);
+    err.status = res.status;
+    err.code = json.code;
+    err.whitelistStatus = json.whitelistStatus;
+    err.userEmail = json.userEmail;
+    err.userName = json.userName;
+    throw err;
+  }
+
+  return { data: json.data as T, raw: json };
+}
+
+export const api = {
+  getStoredUser: authStorage.getUser,
+  getStoredToken: authStorage.getToken,
+  setStoredAuth: authStorage.setAuth,
+  clearStoredAuth: authStorage.clearAuth,
+  onUnauthorized: authStorage.onUnauthorized,
+
+  // 0. Authentication & Demo Role Switching
+  async loginWithGoogle(payload: {
+    credential: string;
+  }): Promise<{ token: string; sessionToken: string; user: User; requiresMobileSetup: boolean }> {
+    const { data } = await requestEnvelope('/auth/google', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
+      body: payload,
+      skipAuthRedirect: true
     });
-    const json = await res.json();
-    if (!json.success) {
-      const err: any = new Error(json.error || 'Failed to authenticate');
-      err.code = json.code;
-      err.whitelistStatus = json.whitelistStatus;
-      err.userEmail = json.userEmail;
-      err.userName = json.userName;
-      throw err;
-    }
-    return json.data;
+    return data;
   },
 
-  // Whitelist Request & Status
+  async loginDemoSession(
+    email: string,
+    name?: string
+  ): Promise<{ token: string; sessionToken: string; user: User; requiresMobileSetup: boolean }> {
+    const { data } = await requestEnvelope('/auth/demo-session', {
+      method: 'POST',
+      body: { email, name },
+      skipAuthRedirect: true
+    });
+    return data;
+  },
+
+  async submitMobileSetup(mobileNo: string, token?: string): Promise<User> {
+    const { data } = await requestEnvelope<User>('/auth/mobile-setup', {
+      method: 'PATCH',
+      body: { mobileNo },
+      tokenOverride: token
+    });
+    return data;
+  },
+
   async requestWhitelist(payload: {
     email: string;
     name: string;
     mobileNo: string;
     reason?: string;
   }): Promise<any> {
-    const res = await fetch(`${API_BASE}/auth/request-whitelist`, {
+    const { raw } = await requestEnvelope('/auth/request-whitelist', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
+      body: payload,
+      skipAuthRedirect: true
     });
-    const json = await res.json();
-    if (!json.success) throw new Error(json.error || 'Failed to submit whitelist request');
-    return json;
+    return raw;
   },
 
   async getWhitelistStatus(email: string): Promise<any> {
-    const res = await fetch(`${API_BASE}/auth/whitelist-status?email=${encodeURIComponent(email)}`);
-    const json = await res.json();
-    if (!json.success) throw new Error(json.error || 'Failed to fetch whitelist status');
-    return json.data;
+    const { data } = await requestEnvelope(
+      `/auth/whitelist-status?email=${encodeURIComponent(email)}`,
+      { skipAuthRedirect: true }
+    );
+    return data;
   },
 
-  // Admin Whitelist Management
-  async getAdminWhitelist(): Promise<{ pendingRequests: any[]; activeUsers: any[]; initialAdminEmail?: string }> {
-    const token = authStorage.getToken();
-    const headers: Record<string, string> = {};
-    if (token) headers['Authorization'] = `Bearer ${token}`;
-
-    const res = await fetch(`${API_BASE}/admin/whitelist`, { headers });
-    const json = await res.json();
-    if (!json.success) throw new Error(json.error || 'Failed to fetch whitelist data');
-    return json.data;
-  },
-
-  async approveWhitelist(requestId: string, role: 'STUDENT' | 'GUARD' | 'ADMIN'): Promise<any> {
-    const token = authStorage.getToken();
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-    if (token) headers['Authorization'] = `Bearer ${token}`;
-
-    const res = await fetch(`${API_BASE}/admin/whitelist/approve`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ requestId, role })
-    });
-    const json = await res.json();
-    if (!json.success) throw new Error(json.error || 'Failed to approve whitelist request');
-    return json;
-  },
-
-  async rejectWhitelist(requestId: string): Promise<any> {
-    const token = authStorage.getToken();
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-    if (token) headers['Authorization'] = `Bearer ${token}`;
-
-    const res = await fetch(`${API_BASE}/admin/whitelist/reject`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ requestId })
-    });
-    const json = await res.json();
-    if (!json.success) throw new Error(json.error || 'Failed to reject whitelist request');
-    return json;
-  },
-
-  async directAddWhitelist(payload: {
-    email: string;
-    name: string;
-    mobileNo?: string;
-    role: 'STUDENT' | 'GUARD' | 'ADMIN';
-  }): Promise<any> {
-    const token = authStorage.getToken();
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-    if (token) headers['Authorization'] = `Bearer ${token}`;
-
-    const res = await fetch(`${API_BASE}/admin/whitelist/direct-add`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(payload)
-    });
-    const json = await res.json();
-    if (!json.success) throw new Error(json.error || 'Failed to add user to whitelist');
-    return json;
-  },
-
-  async revokeWhitelist(id: string): Promise<any> {
-    const token = authStorage.getToken();
-    const headers: Record<string, string> = {};
-    if (token) headers['Authorization'] = `Bearer ${token}`;
-
-    const res = await fetch(`${API_BASE}/admin/whitelist/${id}`, {
-      method: 'DELETE',
-      headers
-    });
-    const json = await res.json();
-    if (!json.success) throw new Error(json.error || 'Failed to revoke whitelist access');
-    return json;
-  },
-
-  async submitMobileSetup(
-    mobileNo: string,
-    token?: string,
-    userId?: string
-  ): Promise<User> {
-    const authToken = token || authStorage.getToken();
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json'
-    };
-    if (authToken) {
-      headers['Authorization'] = `Bearer ${authToken}`;
-    }
-    if (userId) {
-      headers['x-user-id'] = userId;
-    }
-
-    const res = await fetch(`${API_BASE}/auth/mobile-setup`, {
-      method: 'PATCH',
-      headers,
-      body: JSON.stringify({ mobileNo, userId })
-    });
-    const json = await res.json();
-    if (!json.success) throw new Error(json.error || 'Failed to update mobile number');
-    return json.data;
-  },
-
-  getStoredUser: authStorage.getUser,
-  getStoredToken: authStorage.getToken,
-  setStoredAuth: authStorage.setAuth,
-  clearStoredAuth: authStorage.clearAuth,
-  // Inventory
+  // 1. Live Privacy-Safe Inventory
   async getInventory(): Promise<SACItem[]> {
-    const res = await fetch(`${API_BASE}/inventory`);
-    const json = await res.json();
-    if (!json.success) throw new Error(json.error || 'Failed to fetch inventory');
-    return json.data;
+    const { data } = await requestEnvelope<SACItem[]>('/inventory', {
+      skipAuthRedirect: true
+    });
+    return data;
   },
 
-  // Users
+  // 2. Users
   async getUser(id: string): Promise<User> {
-    const res = await fetch(`${API_BASE}/users/${id}`);
-    const json = await res.json();
-    if (!json.success) throw new Error(json.error || 'Failed to fetch user');
-    return json.data;
+    const { data } = await requestEnvelope<User>(`/users/${id}`);
+    return data;
   },
 
   async getAllUsers(): Promise<User[]> {
-    const res = await fetch(`${API_BASE}/admin/users`);
-    const json = await res.json();
-    if (!json.success) throw new Error(json.error || 'Failed to fetch users');
-    return json.data;
+    const { data } = await requestEnvelope<User[]>('/admin/users');
+    return data;
   },
 
-  // Student Holdings & Transfers
-  async getStudentHoldings(studentId: string): Promise<any[]> {
-    const res = await fetch(`${API_BASE}/register/student/${studentId}`);
-    const json = await res.json();
-    if (!json.success) throw new Error(json.error || 'Failed to fetch student holdings');
-    return json.data;
+  // 3. Student Checkouts, Active Holdings & Peer Transfers
+  async getStudentHoldings(studentId: string): Promise<RegisterEntryUnit[]> {
+    const { data } = await requestEnvelope<RegisterEntryUnit[]>(
+      `/register/student/${studentId}`
+    );
+    return data;
+  },
+
+  async getMyPendingRequests(): Promise<IssueRequest[]> {
+    const { data } = await requestEnvelope<IssueRequest[]>('/issue-requests/my-pending');
+    return data;
   },
 
   async getIncomingTransfers(studentId: string): Promise<IncomingTransfer[]> {
-    const res = await fetch(`${API_BASE}/transfers/incoming/${studentId}`);
-    const json = await res.json();
-    if (!json.success) throw new Error(json.error || 'Failed to fetch incoming transfers');
-    return json.data;
+    const { data } = await requestEnvelope<IncomingTransfer[]>(
+      `/transfers/incoming/${studentId}`
+    );
+    return data;
   },
 
   async createIssueRequest(
     studentId: string,
     items: Array<{ itemId: string; name: string; qty: number }>
   ): Promise<IssueRequest> {
-    const res = await fetch(`${API_BASE}/issue-requests`, {
+    const { data } = await requestEnvelope<IssueRequest>('/issue-requests', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ studentId, items })
+      body: { studentId, items }
     });
-    const json = await res.json();
-    if (!json.success) throw new Error(json.error || 'Failed to submit issue request');
-    return json.data;
+    return data;
   },
 
   async initiateTransfer(
@@ -255,110 +220,88 @@ export const api = {
     recipientRollNo?: string,
     recipientId?: string
   ): Promise<any> {
-    const res = await fetch(`${API_BASE}/transfers/${entryId}/initiate`, {
+    const { data } = await requestEnvelope(`/transfers/${entryId}/initiate`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ studentId, recipientRollNo, recipientId })
+      body: { studentId, recipientRollNo, recipientId }
     });
-    const json = await res.json();
-    if (!json.success) throw new Error(json.error || 'Failed to initiate transfer');
-    return json.data;
+    return data;
   },
 
   async cancelTransfer(entryId: string, studentId: string): Promise<any> {
-    const res = await fetch(`${API_BASE}/transfers/${entryId}/cancel`, {
+    const { data } = await requestEnvelope(`/transfers/${entryId}/cancel`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ studentId })
+      body: { studentId }
     });
-    const json = await res.json();
-    if (!json.success) throw new Error(json.error || 'Failed to cancel transfer');
-    return json.data;
+    return data;
   },
 
-  async respondTransfer(entryId: string, studentId: string, action: 'ACCEPT' | 'REJECT'): Promise<any> {
-    const res = await fetch(`${API_BASE}/transfers/${entryId}/respond`, {
+  async respondTransfer(
+    entryId: string,
+    studentId: string,
+    action: 'ACCEPT' | 'REJECT'
+  ): Promise<any> {
+    const { data } = await requestEnvelope(`/transfers/${entryId}/respond`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ studentId, action })
+      body: { studentId, action }
     });
-    const json = await res.json();
-    if (!json.success) throw new Error(json.error || 'Failed to respond to transfer');
-    return json.data;
+    return data;
   },
 
-  // Guard Desk
+  // 4. Guard Counter Operations
   async getPendingRequests(): Promise<IssueRequest[]> {
-    const res = await fetch(`${API_BASE}/guard/requests/pending`);
-    const json = await res.json();
-    if (!json.success) throw new Error(json.error || 'Failed to fetch pending requests');
-    return json.data;
+    const { data } = await requestEnvelope<IssueRequest[]>('/guard/requests/pending');
+    return data;
   },
 
   async approveRequest(requestId: string, guardId: string): Promise<any> {
-    const res = await fetch(`${API_BASE}/guard/requests/${requestId}/approve`, {
+    const { data } = await requestEnvelope(`/guard/requests/${requestId}/approve`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ guardId })
+      body: { guardId }
     });
-    const json = await res.json();
-    if (!json.success) throw new Error(json.error || 'Failed to approve request');
-    return json.data;
+    return data;
   },
 
   async getActiveRegister(): Promise<ActiveBatch[]> {
-    const res = await fetch(`${API_BASE}/guard/register/active`);
-    const json = await res.json();
-    if (!json.success) throw new Error(json.error || 'Failed to fetch active register');
-    return json.data;
+    const { data } = await requestEnvelope<ActiveBatch[]>('/guard/register/active');
+    return data;
   },
 
   async returnUnitIntact(entryId: string): Promise<any> {
-    const res = await fetch(`${API_BASE}/guard/returns/${entryId}/intact`, {
+    const { data } = await requestEnvelope(`/guard/returns/${entryId}/intact`, {
       method: 'POST'
     });
-    const json = await res.json();
-    if (!json.success) throw new Error(json.error || 'Failed to mark unit returned');
-    return json.data;
+    return data;
   },
 
   async returnBatchIntact(batchId: string): Promise<any> {
-    const res = await fetch(`${API_BASE}/guard/returns/batch/${batchId}/intact`, {
+    const { data } = await requestEnvelope(`/guard/returns/batch/${batchId}/intact`, {
       method: 'POST'
     });
-    const json = await res.json();
-    if (!json.success) throw new Error(json.error || 'Failed to mark batch returned');
-    return json.data;
+    return data;
   },
 
   async returnUnitDamaged(entryId: string): Promise<any> {
-    const res = await fetch(`${API_BASE}/guard/returns/${entryId}/damaged`, {
+    const { data } = await requestEnvelope(`/guard/returns/${entryId}/damaged`, {
       method: 'POST'
     });
-    const json = await res.json();
-    if (!json.success) throw new Error(json.error || 'Failed to mark unit damaged');
-    return json.data;
+    return data;
   },
 
   async occupyRoomForFaculty(roomId: string): Promise<any> {
-    const res = await fetch(`${API_BASE}/guard/rooms/${roomId}/faculty-occupy`, {
+    const { data } = await requestEnvelope(`/guard/rooms/${roomId}/faculty-occupy`, {
       method: 'POST'
     });
-    const json = await res.json();
-    if (!json.success) throw new Error(json.error || 'Failed to occupy room for faculty');
-    return json.data;
+    return data;
   },
 
   async releaseRoom(roomId: string): Promise<any> {
-    const res = await fetch(`${API_BASE}/guard/rooms/${roomId}/release`, {
+    const { data } = await requestEnvelope(`/guard/rooms/${roomId}/release`, {
       method: 'POST'
     });
-    const json = await res.json();
-    if (!json.success) throw new Error(json.error || 'Failed to release room');
-    return json.data;
+    return data;
   },
 
-  // Admin Console
+  // 5. Admin Governance Console
   async getAdminLogs(params?: { status?: string; page?: number; limit?: number }): Promise<{
     logs: any[];
     totalCount: number;
@@ -371,52 +314,125 @@ export const api = {
     if (params?.page) query.set('page', String(params.page));
     if (params?.limit) query.set('limit', String(params.limit));
 
-    const url = `${API_BASE}/admin/register-logs${query.toString() ? `?${query.toString()}` : ''}`;
-    const res = await fetch(url);
-    const json = await res.json();
-    if (!json.success) throw new Error(json.error || 'Failed to fetch admin logs');
+    const path = `/admin/register-logs${query.toString() ? `?${query.toString()}` : ''}`;
+    const { raw } = await requestEnvelope(path);
     return {
-      logs: Array.isArray(json.data) ? json.data : [],
-      totalCount: json.totalCount ?? (Array.isArray(json.data) ? json.data.length : 0),
-      todayCount: json.todayCount ?? 0,
-      totalPages: json.totalPages ?? 1,
-      currentPage: json.currentPage ?? (params?.page || 1)
+      logs: Array.isArray(raw.data) ? raw.data : [],
+      totalCount: raw.totalCount ?? (Array.isArray(raw.data) ? raw.data.length : 0),
+      todayCount: raw.todayCount ?? 0,
+      totalPages: raw.totalPages ?? 1,
+      currentPage: raw.currentPage ?? (params?.page || 1)
     };
   },
 
+  async downloadAdminLogsCsv(statusFilter?: string): Promise<void> {
+    const query = new URLSearchParams({ format: 'csv' });
+    if (statusFilter && statusFilter !== 'ALL') {
+      query.set('status', statusFilter);
+    }
+
+    const token = authStorage.getToken();
+    const res = await fetch(`${API_BASE}/admin/register-logs?${query.toString()}`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {}
+    });
+
+    if (!res.ok) {
+      throw new Error(`CSV export failed (HTTP ${res.status})`);
+    }
+
+    const blob = await res.blob();
+    const url = window.URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `sacpulse_register_logs_${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.URL.revokeObjectURL(url);
+  },
+
   async clearDefaulter(userId: string): Promise<any> {
-    const res = await fetch(`${API_BASE}/admin/users/${userId}/clear-defaulter`, {
+    const { data } = await requestEnvelope(`/admin/users/${userId}/clear-defaulter`, {
       method: 'POST'
     });
-    const json = await res.json();
-    if (!json.success) throw new Error(json.error || 'Failed to clear defaulter');
-    return json.data;
+    return data;
   },
 
   async resetCooldown(userId: string): Promise<any> {
-    const res = await fetch(`${API_BASE}/admin/users/${userId}/reset-cooldown`, {
+    const { data } = await requestEnvelope(`/admin/users/${userId}/reset-cooldown`, {
       method: 'POST'
     });
-    const json = await res.json();
-    if (!json.success) throw new Error(json.error || 'Failed to reset cooldown');
-    return json.data;
+    return data;
   },
 
-  async upsertInventory(payload: any): Promise<any> {
-    const res = await fetch(`${API_BASE}/admin/inventory`, {
+  async upsertInventory(payload: {
+    id?: string;
+    name: string;
+    category: string;
+    itemType: 'EQUIPMENT' | 'ROOM_KEY';
+    totalQty?: number;
+    availableQty?: number;
+    damagedQty?: number;
+  }): Promise<any> {
+    const { data } = await requestEnvelope('/admin/inventory', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
+      body: payload
     });
-    const json = await res.json();
-    if (!json.success) throw new Error(json.error || 'Failed to upsert item');
-    return json.data;
+    return data;
   },
 
   async deleteInventory(id: string): Promise<any> {
-    const res = await fetch(`${API_BASE}/admin/inventory/${id}`, { method: 'DELETE' });
-    const json = await res.json();
-    if (!json.success) throw new Error(json.error || 'Failed to delete item');
-    return json.data;
+    const { data } = await requestEnvelope(`/admin/inventory/${id}`, {
+      method: 'DELETE'
+    });
+    return data;
+  },
+
+  async getAdminWhitelist(): Promise<{
+    pendingRequests: any[];
+    activeUsers: any[];
+    initialAdminEmail?: string;
+  }> {
+    const { data } = await requestEnvelope('/admin/whitelist');
+    return data;
+  },
+
+  async approveWhitelist(
+    requestId: string,
+    role: 'STUDENT' | 'GUARD' | 'ADMIN'
+  ): Promise<any> {
+    const { raw } = await requestEnvelope('/admin/whitelist/approve', {
+      method: 'POST',
+      body: { requestId, role }
+    });
+    return raw;
+  },
+
+  async rejectWhitelist(requestId: string): Promise<any> {
+    const { raw } = await requestEnvelope('/admin/whitelist/reject', {
+      method: 'POST',
+      body: { requestId }
+    });
+    return raw;
+  },
+
+  async directAddWhitelist(payload: {
+    email: string;
+    name: string;
+    mobileNo?: string;
+    role: 'STUDENT' | 'GUARD' | 'ADMIN';
+  }): Promise<any> {
+    const { raw } = await requestEnvelope('/admin/whitelist/direct-add', {
+      method: 'POST',
+      body: payload
+    });
+    return raw;
+  },
+
+  async revokeWhitelist(id: string): Promise<any> {
+    const { raw } = await requestEnvelope(`/admin/whitelist/${id}`, {
+      method: 'DELETE'
+    });
+    return raw;
   }
 };

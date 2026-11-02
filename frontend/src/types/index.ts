@@ -23,6 +23,7 @@ export interface SACItem {
   itemType: ItemType;
   totalQty: number;
   availableQty: number;
+  damagedQty?: number;
   isAvailable: boolean;
   occupiedSince?: string | null;
   hasActiveStudentCheckout?: boolean;
@@ -57,9 +58,11 @@ export type RegisterStatus =
 
 export interface RegisterEntryUnit {
   id: string;
+  batchId?: string;
   itemId: string;
   itemName: string;
   category: string;
+  arrivalTime?: string;
   status: RegisterStatus;
   pendingTransferToId: string | null;
 }
@@ -84,4 +87,15 @@ export interface IncomingTransfer {
   fromStudentName: string;
   fromRollNo: string;
   arrivalTime: string;
+}
+
+export interface StudentRealtimeNotification {
+  studentId: string;
+  event: string;
+  data: {
+    message?: string;
+    reason?: string;
+    [key: string]: unknown;
+  };
+  timestamp: string;
 }

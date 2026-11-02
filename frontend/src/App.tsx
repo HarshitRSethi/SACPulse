@@ -1,38 +1,98 @@
 import { useState, useEffect, useCallback } from 'react';
-import type { User } from './types/index';
+import type { StudentRealtimeNotification, User } from './types/index';
 import { api } from './services/api';
 import { socketService } from './services/socket';
+import { BrandMark } from './components/BrandMark';
 import { DevRoleSwitcher, type DevUserPreset } from './components/DevRoleSwitcher';
 import { LoginPage } from './components/auth/LoginPage';
 import { MobileSetupModal } from './components/auth/MobileSetupModal';
 import { StudentDashboard } from './components/student/StudentDashboard';
 import { GuardDashboard } from './components/guard/GuardDashboard';
 import { AdminDashboard } from './components/admin/AdminDashboard';
-import {
-  Wifi,
-  WifiOff,
-  LogOut,
-  UserCheck,
-  Shield,
-  Award,
-  AlertTriangle
-} from 'lucide-react';
+import { AlertTriangle, Bell, LogOut, X } from 'lucide-react';
+
+const DEMO_MODE_STORAGE_KEY = 'sacpulse_demo_switcher_visible';
+
+function resolveInitialDemoVisibility(): boolean {
+  try {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('demo') === '1') {
+      sessionStorage.setItem(DEMO_MODE_STORAGE_KEY, '1');
+      return true;
+    }
+    return sessionStorage.getItem(DEMO_MODE_STORAGE_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
 
 export default function App() {
   const [currentUser, setCurrentUser] = useState<User | null>(() => api.getStoredUser());
-  const [sessionToken, setSessionToken] = useState<string | null>(() => api.getStoredToken());
+  const [sessionToken, setSessionToken] = useState<string | null>(() =>
+    api.getStoredToken()
+  );
   const [isSocketConnected, setIsSocketConnected] = useState<boolean>(false);
   const [isSwitchingDev, setIsSwitchingDev] = useState<boolean>(false);
+  const [demoModeVisible, setDemoModeVisible] = useState<boolean>(() =>
+    resolveInitialDemoVisibility()
+  );
+  const [toastNotification, setToastNotification] = useState<string | null>(null);
 
-  // Initialize Socket connection
+  const handleSignOut = useCallback(() => {
+    api.clearStoredAuth();
+    setCurrentUser(null);
+    setSessionToken(null);
+  }, []);
+
+  // Automatically clear stale/unsigned sessions when backend returns 401
+  useEffect(() => {
+    api.onUnauthorized(() => {
+      setCurrentUser(null);
+      setSessionToken(null);
+    });
+    return () => api.onUnauthorized(null);
+  }, []);
+
+  // Discrete keyboard shortcut: Ctrl+Shift+D (or Cmd+Shift+D) toggles Demo Role Switcher
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'd') {
+        e.preventDefault();
+        setDemoModeVisible((prev) => {
+          const next = !prev;
+          try {
+            if (next) {
+              sessionStorage.setItem(DEMO_MODE_STORAGE_KEY, '1');
+            } else {
+              sessionStorage.removeItem(DEMO_MODE_STORAGE_KEY);
+            }
+          } catch {
+            // ignore storage errors
+          }
+          return next;
+        });
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, []);
+
+  // Initialize Socket.io connection & listen for targeted student room notifications
   useEffect(() => {
     const socket = socketService.connect();
 
-    const handleConnect = () => setIsSocketConnected(true);
+    const handleConnect = () => {
+      setIsSocketConnected(true);
+      if (currentUser?.role === 'STUDENT') {
+        socketService.joinStudent(currentUser.id);
+      } else if (currentUser?.role === 'GUARD') {
+        socketService.joinGuard();
+      }
+    };
     const handleDisconnect = () => setIsSocketConnected(false);
 
     if (socket.connected) {
-      setIsSocketConnected(true);
+      handleConnect();
     }
 
     socket.on('connect', handleConnect);
@@ -42,25 +102,7 @@ export default function App() {
       socket.off('connect', handleConnect);
       socket.off('disconnect', handleDisconnect);
     };
-  }, []);
-
-  // Sync latest user profile on mount if token is stored
-  useEffect(() => {
-    const stored = api.getStoredUser();
-    if (stored?.id) {
-      api.getUser(stored.id)
-        .then((latestUser) => {
-          setCurrentUser(latestUser);
-          const token = api.getStoredToken();
-          if (token) {
-            api.setStoredAuth(token, latestUser);
-          }
-        })
-        .catch((err) => {
-          console.warn('Could not sync latest user profile from server:', err);
-        });
-    }
-  }, []);
+  }, [currentUser?.id, currentUser?.role]);
 
   const refreshCurrentUser = useCallback(async () => {
     if (!currentUser) return;
@@ -71,12 +113,71 @@ export default function App() {
       if (token) {
         api.setStoredAuth(token, updated);
       }
-    } catch (err) {
-      console.warn('Failed to refresh user:', err);
+    } catch {
+      // Handled by api.onUnauthorized if 401
     }
   }, [currentUser]);
 
-  const handleLoginSuccess = (user: User, token: string, requiresMobileSetup: boolean) => {
+  useEffect(() => {
+    const socket = socketService.socket;
+    if (!socket || !currentUser || currentUser.role !== 'STUDENT') return;
+
+    socketService.joinStudent(currentUser.id);
+
+    const handleStudentNotification = (payload: StudentRealtimeNotification) => {
+      if (payload.studentId && payload.studentId !== currentUser.id) return;
+      const msg =
+        (payload.data?.message as string) ||
+        (payload.data?.reason as string) ||
+        null;
+      if (msg) {
+        setToastNotification(msg);
+      }
+      if (
+        payload.event === 'DEFAULTER_LOCKED' ||
+        payload.event === 'PENALTY_APPLIED' ||
+        payload.event === 'RESTRICTION_CLEARED'
+      ) {
+        refreshCurrentUser();
+      }
+    };
+
+    socket.on('student:notification', handleStudentNotification);
+    return () => {
+      socket.off('student:notification', handleStudentNotification);
+    };
+  }, [currentUser, refreshCurrentUser]);
+
+  useEffect(() => {
+    if (!toastNotification) return;
+    const t = setTimeout(() => setToastNotification(null), 5000);
+    return () => clearTimeout(t);
+  }, [toastNotification]);
+
+  // Sync latest user profile on mount if a valid signed JWT is stored
+  useEffect(() => {
+    const stored = api.getStoredUser();
+    const token = api.getStoredToken();
+    if (stored?.id && token) {
+      api
+        .getUser(stored.id)
+        .then((latestUser) => {
+          setCurrentUser(latestUser);
+          api.setStoredAuth(token, latestUser);
+        })
+        .catch(() => {
+          // 401 handler clears stale unsigned tokens cleanly
+        });
+    } else if (stored && !token) {
+      handleSignOut();
+    }
+  }, [handleSignOut]);
+
+  const handleLoginSuccess = (
+    user: User,
+    token: string,
+    requiresMobileSetup: boolean
+  ) => {
     const enrichedUser: User = { ...user, requiresMobileSetup };
     setCurrentUser(enrichedUser);
     setSessionToken(token);
@@ -92,41 +193,39 @@ export default function App() {
     }
   };
 
-  const handleSignOut = () => {
-    api.clearStoredAuth();
-    setCurrentUser(null);
-    setSessionToken(null);
-  };
-
   const handleSelectDevPreset = async (preset: DevUserPreset) => {
     try {
       setIsSwitchingDev(true);
-      const res = await api.loginWithGoogle(preset.email, preset.name);
+      const res = await api.loginDemoSession(preset.email, preset.name);
       handleLoginSuccess(res.user, res.token, res.requiresMobileSetup);
-    } catch (err) {
-      console.error('Failed to switch dev user via auth API:', err);
-      // Fallback local switch if network error
-      const fallbackUser: User = {
-        id: preset.id || 'dev-user',
-        name: preset.name,
-        email: preset.email,
-        role: preset.role,
-        rollNo: preset.rollNo || null,
-        requiresMobileSetup: false
-      };
-      setCurrentUser(fallbackUser);
+    } catch (err: any) {
+      setToastNotification(err.message || 'Demo role switch failed.');
     } finally {
       setIsSwitchingDev(false);
     }
   };
 
-  // If not logged in, render LoginPage
+  const handleDismissDemoMode = () => {
+    setDemoModeVisible(false);
+    try {
+      sessionStorage.removeItem(DEMO_MODE_STORAGE_KEY);
+    } catch {
+      // ignore
+    }
+  };
+
   if (!currentUser) {
     return (
       <div className="relative">
-        <LoginPage onLoginSuccess={handleLoginSuccess} />
-        {/* Dev dock remains accessible for quick testing */}
+        <LoginPage
+          onLoginSuccess={handleLoginSuccess}
+          demoModeEnabled={demoModeVisible}
+          onSelectDemoPreset={handleSelectDevPreset}
+          isSwitchingDemo={isSwitchingDev}
+        />
         <DevRoleSwitcher
+          isVisible={demoModeVisible}
+          onDismissMode={handleDismissDemoMode}
           currentUser={null}
           onSelectUser={handleSelectDevPreset}
           isSwitching={isSwitchingDev}
@@ -137,7 +236,9 @@ export default function App() {
 
   const isUserBlocked =
     currentUser.isDefaulter ||
-    Boolean(currentUser.penaltyUntil && new Date(currentUser.penaltyUntil) > new Date());
+    Boolean(
+      currentUser.penaltyUntil && new Date(currentUser.penaltyUntil) > new Date()
+    );
 
   const showMobileSetupModal =
     currentUser.requiresMobileSetup ||
@@ -145,9 +246,15 @@ export default function App() {
     currentUser.mobileNo === undefined ||
     currentUser.mobileNo === '';
 
+  const roleLabel =
+    currentUser.role === 'ADMIN'
+      ? 'Admin'
+      : currentUser.role === 'GUARD'
+        ? 'Guard Desk'
+        : currentUser.rollNo || 'Student';
+
   return (
-    <div className="min-h-screen bg-[#FAFAFB] text-zinc-900 selection:bg-blue-600 selection:text-white font-sans flex flex-col">
-      {/* First-Time Mobile Setup Modal */}
+    <div className="min-h-screen bg-[#FAFAFB] text-zinc-900 font-sans flex flex-col">
       {showMobileSetupModal && (
         <MobileSetupModal
           user={currentUser}
@@ -156,109 +263,81 @@ export default function App() {
         />
       )}
 
-      {/* Production Top Navbar */}
-      <header className="sticky top-0 z-30 bg-white/95 backdrop-blur-md border-b border-[#E4E4E7] px-4 py-2.5 shadow-xs">
-        <div className="max-w-7xl mx-auto flex items-center justify-between gap-3">
-          
-          {/* SACPulse Brand & Live Sync Indicator */}
+      {/* Real-time Toast Notification */}
+      {toastNotification && (
+        <div className="fixed top-16 right-4 z-50 max-w-sm bg-zinc-900 text-white rounded-lg border border-zinc-800 shadow-lg px-3.5 py-2.5 text-xs flex items-start gap-2.5">
+          <Bell className="w-3.5 h-3.5 text-zinc-300 shrink-0 mt-0.5" />
+          <span className="flex-1 leading-relaxed">{toastNotification}</span>
+          <button
+            onClick={() => setToastNotification(null)}
+            className="text-zinc-400 hover:text-white transition"
+            aria-label="Dismiss notification"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
+
+      {/* Clean Restrained Top Header */}
+      <header className="sticky top-0 z-30 bg-white border-b border-zinc-200 px-4 h-13 flex items-center">
+        <div className="max-w-7xl w-full mx-auto flex items-center justify-between gap-3 py-2.5">
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-2">
-              <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-blue-600 font-black text-white text-sm shadow-sm shadow-blue-500/20">
-                ⚡
+              <BrandMark size="sm" />
+              <span className="text-sm font-semibold tracking-tight text-zinc-900">
+                SACPulse
               </span>
-              <div className="flex items-center gap-1.5">
-                <span className="text-base font-extrabold tracking-tight text-zinc-900">
-                  SACPulse
-                </span>
-                <span className="text-[10px] uppercase font-mono font-bold px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200">
-                  IIITA
-                </span>
-              </div>
+              <span className="text-[10px] font-mono uppercase px-1.5 py-0.5 rounded bg-zinc-100 text-zinc-600 border border-zinc-200">
+                IIITA
+              </span>
             </div>
 
-            {/* Socket Live Sync Pill */}
             <div
-              className={`hidden sm:inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold transition-all ${
-                isSocketConnected
-                  ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                  : 'bg-amber-50 text-amber-700 border border-amber-200'
-              }`}
+              className="hidden sm:inline-flex items-center gap-1.5 text-[11px] text-zinc-500 border-l border-zinc-200 pl-3"
               title={
                 isSocketConnected
-                  ? 'Real-Time WebSocket Sync Connected'
-                  : 'Reconnecting to Real-Time Hub...'
+                  ? 'Real-time WebSocket connected'
+                  : 'Reconnecting to real-time server'
               }
             >
-              {isSocketConnected ? (
-                <>
-                  <span className="relative flex h-2 w-2">
-                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
-                    <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
-                  </span>
-                  <span className="flex items-center gap-1">
-                    <Wifi className="w-3 h-3" /> Live Sync
-                  </span>
-                </>
-              ) : (
-                <>
-                  <span className="h-2 w-2 rounded-full bg-amber-500 animate-pulse" />
-                  <span className="flex items-center gap-1">
-                    <WifiOff className="w-3 h-3" /> Connecting...
-                  </span>
-                </>
-              )}
+              <span
+                className={`h-1.5 w-1.5 rounded-full ${
+                  isSocketConnected ? 'bg-emerald-500' : 'bg-amber-500'
+                }`}
+              />
+              <span>{isSocketConnected ? 'Live' : 'Connecting'}</span>
             </div>
           </div>
 
-          {/* User Profile Chip & Sign Out Button */}
-          <div className="flex items-center gap-2 sm:gap-3">
-            {/* Status warning pill if defaulter/cooldown */}
+          <div className="flex items-center gap-2.5">
             {isUserBlocked && (
-              <div className="hidden md:flex items-center gap-1 px-2.5 py-1 rounded-full bg-red-50 border border-red-200 text-red-700 text-xs font-bold animate-pulse">
-                <AlertTriangle className="w-3.5 h-3.5" />
-                <span>Account Restricted</span>
+              <div className="hidden md:inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-red-50 border border-red-200 text-red-700 text-[11px] font-medium">
+                <AlertTriangle className="w-3 h-3" />
+                <span>Restricted</span>
               </div>
             )}
 
-            {/* User Profile Chip */}
-            <div className="flex items-center gap-2.5 px-3 py-1.5 rounded-2xl bg-zinc-50 border border-zinc-200/90 text-xs">
-              <div className="w-7 h-7 rounded-xl flex items-center justify-center font-bold text-xs shrink-0 shadow-xs border bg-white">
-                {currentUser.role === 'ADMIN' && (
-                  <Award className="w-4 h-4 text-purple-600" />
-                )}
-                {currentUser.role === 'GUARD' && (
-                  <Shield className="w-4 h-4 text-amber-600" />
-                )}
-                {currentUser.role === 'STUDENT' && (
-                  <UserCheck className="w-4 h-4 text-blue-600" />
-                )}
-              </div>
-
-              <div className="flex flex-col text-left leading-tight">
-                <span className="font-bold text-zinc-900 max-w-[130px] sm:max-w-[180px] truncate">
-                  {currentUser.name}
-                </span>
-                <span className="text-[10px] text-zinc-500 font-mono">
-                  {currentUser.rollNo || (currentUser.role === 'GUARD' ? 'Guard Desk' : 'SAC Admin')}
-                </span>
-              </div>
+            <div className="flex items-center gap-2 px-2.5 py-1 rounded-md bg-zinc-50 border border-zinc-200 text-xs">
+              <span className="font-medium text-zinc-900 max-w-[140px] sm:max-w-[200px] truncate">
+                {currentUser.name}
+              </span>
+              <span className="text-zinc-300">·</span>
+              <span className="text-[11px] text-zinc-500 font-mono">{roleLabel}</span>
             </div>
 
-            {/* Sign Out Button */}
             <button
               onClick={handleSignOut}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-2xl border border-zinc-200 hover:border-red-200 hover:bg-red-50 text-zinc-600 hover:text-red-700 text-xs font-semibold transition active:scale-95 shadow-xs"
-              title="Sign Out of SACPulse"
+              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md border border-zinc-200 hover:bg-zinc-50 text-zinc-600 hover:text-zinc-900 text-xs font-medium transition"
+              title="Sign out"
             >
               <LogOut className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">Sign Out</span>
+              <span className="hidden sm:inline">Sign out</span>
             </button>
           </div>
-
         </div>
       </header>
 
-      {/* Main Role-Based Dashboard Portal */}
+      {/* Role-Routed Workspace */}
       <main className="flex-1">
         {currentUser.role === 'STUDENT' && (
           <StudentDashboard
@@ -269,32 +348,24 @@ export default function App() {
         )}
 
         {currentUser.role === 'GUARD' && (
-          <GuardDashboard
-            key={currentUser.id}
-            currentUser={currentUser}
-          />
+          <GuardDashboard key={currentUser.id} currentUser={currentUser} />
         )}
 
         {currentUser.role === 'ADMIN' && (
-          <AdminDashboard
-            key={currentUser.id}
-            currentUser={currentUser}
-          />
+          <AdminDashboard key={currentUser.id} currentUser={currentUser} />
         )}
       </main>
 
-      {/* Floating Collapsible Dev Dock */}
       <DevRoleSwitcher
+        isVisible={demoModeVisible}
+        onDismissMode={handleDismissDemoMode}
         currentUser={currentUser}
         onSelectUser={handleSelectDevPreset}
         isSwitching={isSwitchingDev}
       />
 
-      {/* Footer */}
-      <footer className="border-t border-[#E4E4E7] bg-white py-4 px-6 text-center text-xs text-zinc-500">
-        <p>
-          IIITA Student Activity Centre (SAC) • Real-Time Digital Register & Equipment Pulse
-        </p>
+      <footer className="border-t border-zinc-200 bg-white py-3.5 px-6 text-center text-[11px] text-zinc-500">
+        IIITA Student Activity Centre — Digital Equipment & Room Register
       </footer>
     </div>
   );

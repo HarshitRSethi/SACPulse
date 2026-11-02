@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import type { User } from '../types/index';
-import { Wrench, X, Check, Loader2 } from 'lucide-react';
+import { Check, Loader2, Terminal, X } from 'lucide-react';
 
 export interface DevUserPreset {
   id?: string;
@@ -8,7 +8,7 @@ export interface DevUserPreset {
   email: string;
   role: 'STUDENT' | 'GUARD' | 'ADMIN';
   rollNo?: string;
-  avatar: string;
+  code: string;
   label: string;
   badge: string;
 }
@@ -20,7 +20,7 @@ export const PRESET_USERS: DevUserPreset[] = [
     email: 'studenta@iiita.ac.in',
     role: 'STUDENT',
     rollNo: 'IIT2023001',
-    avatar: '👨‍🎓',
+    code: 'S1',
     label: 'Student A',
     badge: 'IIT2023001'
   },
@@ -30,7 +30,7 @@ export const PRESET_USERS: DevUserPreset[] = [
     email: 'studentb@iiita.ac.in',
     role: 'STUDENT',
     rollNo: 'IIT2023002',
-    avatar: '👩‍🎓',
+    code: 'S2',
     label: 'Student B',
     badge: 'IIT2023002'
   },
@@ -39,33 +39,41 @@ export const PRESET_USERS: DevUserPreset[] = [
     name: 'SAC Guard Ramesh',
     email: 'guard.sac.iiita@gmail.com',
     role: 'GUARD',
-    avatar: '👮‍♂️',
-    label: 'SAC Guard',
-    badge: 'Desk Operator'
+    code: 'GD',
+    label: 'Guard Desk',
+    badge: 'Counter'
   },
   {
     id: '1f1e9350-4a2e-40da-a076-799e8df1d422',
     name: 'SAC Admin Dr. Sharma',
     email: 'admin@iiita.ac.in',
     role: 'ADMIN',
-    avatar: '🏛️',
+    code: 'AD',
     label: 'SAC Admin',
     badge: 'Governance'
   }
 ];
 
 interface DevRoleSwitcherProps {
+  isVisible: boolean;
+  onDismissMode: () => void;
   currentUser: User | null;
   onSelectUser: (preset: DevUserPreset) => void;
   isSwitching?: boolean;
 }
 
 export const DevRoleSwitcher: React.FC<DevRoleSwitcherProps> = ({
+  isVisible,
+  onDismissMode,
   currentUser,
   onSelectUser,
   isSwitching = false
 }) => {
   const [isOpen, setIsOpen] = useState(false);
+
+  if (!isVisible) {
+    return null;
+  }
 
   const activePreset = PRESET_USERS.find(
     (p) =>
@@ -74,38 +82,40 @@ export const DevRoleSwitcher: React.FC<DevRoleSwitcherProps> = ({
   );
 
   return (
-    <aside aria-label="Developer Role Switcher" className="fixed bottom-5 right-5 z-50 flex flex-col items-end">
-      {/* Expanded Floating Card */}
+    <aside
+      aria-label="Evaluation Role Switcher"
+      className="fixed bottom-4 right-4 z-50 flex flex-col items-end"
+    >
       {isOpen && (
-        <div className="mb-3 w-80 sm:w-96 bg-white/95 backdrop-blur-md rounded-3xl border border-zinc-200/90 shadow-2xl p-5 animate-in slide-in-from-bottom-2 duration-150">
-          <div className="flex items-center justify-between pb-3 border-b border-zinc-100">
-            <div className="flex items-center gap-2">
-              <span className="p-1.5 rounded-xl bg-zinc-100 text-zinc-800 text-sm">
-                🛠️
+        <div className="mb-2 w-80 bg-white rounded-lg border border-zinc-200 shadow-lg p-3.5">
+          <div className="flex items-center justify-between pb-2.5 border-b border-zinc-100">
+            <div>
+              <h3 className="font-semibold text-xs text-zinc-900">
+                Demo Session Switcher
+              </h3>
+              <span className="text-[11px] text-zinc-500">
+                Toggle with <kbd className="font-mono text-[10px] px-1 py-0.5 bg-zinc-100 border border-zinc-200 rounded">Ctrl+Shift+D</kbd>
               </span>
-              <div>
-                <h3 className="font-extrabold text-xs text-zinc-900 tracking-tight">
-                  Dev Role Switcher
-                </h3>
-                <span className="text-[10px] text-zinc-400 font-mono">
-                  Multi-account testing dock
-                </span>
-              </div>
             </div>
-            <button
-              onClick={() => setIsOpen(false)}
-              className="p-1 rounded-xl hover:bg-zinc-100 text-zinc-400 hover:text-zinc-700 transition"
-              title="Close Dock"
-            >
-              <X className="w-4 h-4" />
-            </button>
+            <div className="flex items-center gap-1">
+              <button
+                onClick={onDismissMode}
+                className="px-2 py-1 rounded text-[10px] font-medium text-zinc-500 hover:text-zinc-800 hover:bg-zinc-100 transition"
+                title="Hide demo switcher (Ctrl+Shift+D to reopen)"
+              >
+                Hide
+              </button>
+              <button
+                onClick={() => setIsOpen(false)}
+                className="p-1 rounded hover:bg-zinc-100 text-zinc-400 hover:text-zinc-700 transition"
+                title="Collapse"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
           </div>
 
-          <p className="text-[11px] text-zinc-500 my-3 leading-relaxed">
-            Instantly switch authenticated sessions to verify student requests, guard counter returns, or admin governance:
-          </p>
-
-          <div className="space-y-2">
+          <div className="mt-2.5 space-y-1.5">
             {PRESET_USERS.map((preset) => {
               const isActive =
                 preset.email.toLowerCase() === currentUser?.email?.toLowerCase() ||
@@ -119,30 +129,36 @@ export const DevRoleSwitcher: React.FC<DevRoleSwitcherProps> = ({
                     onSelectUser(preset);
                     setIsOpen(false);
                   }}
-                  className={`w-full flex items-center justify-between p-2.5 rounded-2xl text-left border transition-all ${
+                  className={`w-full flex items-center justify-between px-2.5 py-2 rounded-md text-left border transition ${
                     isActive
-                      ? 'bg-zinc-900 text-white border-zinc-900 shadow-sm'
-                      : 'bg-zinc-50 hover:bg-zinc-100 text-zinc-800 border-zinc-200/80 hover:border-zinc-300'
+                      ? 'bg-zinc-900 text-white border-zinc-900'
+                      : 'bg-white hover:bg-zinc-50 text-zinc-800 border-zinc-200'
                   }`}
                 >
-                  <div className="flex items-center gap-2.5">
-                    <span className="text-lg">{preset.avatar}</span>
-                    <div>
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <span
+                      className={`w-6 h-6 rounded text-[10px] font-mono font-semibold flex items-center justify-center shrink-0 ${
+                        isActive
+                          ? 'bg-zinc-800 text-zinc-200'
+                          : 'bg-zinc-100 text-zinc-700 border border-zinc-200'
+                      }`}
+                    >
+                      {preset.code}
+                    </span>
+                    <div className="min-w-0">
                       <div className="flex items-center gap-1.5">
-                        <span className="font-bold text-xs">{preset.label}</span>
+                        <span className="font-medium text-xs truncate">{preset.label}</span>
                         <span
-                          className={`text-[9px] font-mono px-1.5 py-0.5 rounded ${
-                            isActive
-                              ? 'bg-zinc-800 text-zinc-200'
-                              : 'bg-zinc-200/80 text-zinc-600'
+                          className={`text-[10px] font-mono px-1.5 py-0.2 rounded ${
+                            isActive ? 'bg-zinc-800 text-zinc-300' : 'bg-zinc-100 text-zinc-600'
                           }`}
                         >
                           {preset.badge}
                         </span>
                       </div>
                       <span
-                        className={`text-[10px] font-mono block ${
-                          isActive ? 'text-zinc-300' : 'text-zinc-500'
+                        className={`text-[10px] font-mono block truncate ${
+                          isActive ? 'text-zinc-400' : 'text-zinc-500'
                         }`}
                       >
                         {preset.email}
@@ -150,11 +166,7 @@ export const DevRoleSwitcher: React.FC<DevRoleSwitcherProps> = ({
                     </div>
                   </div>
 
-                  {isActive && (
-                    <span className="flex items-center gap-1 text-[10px] font-mono font-bold text-emerald-400 bg-emerald-950/40 px-2 py-0.5 rounded-full border border-emerald-500/30">
-                      <Check className="w-3 h-3" /> Active
-                    </span>
-                  )}
+                  {isActive && <Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" />}
                 </button>
               );
             })}
@@ -162,24 +174,21 @@ export const DevRoleSwitcher: React.FC<DevRoleSwitcherProps> = ({
         </div>
       )}
 
-      {/* Collapsed Subtle Floating Pill */}
       <button
         onClick={() => setIsOpen(!isOpen)}
         disabled={isSwitching}
-        className="group relative flex items-center gap-2 px-3.5 py-2.5 rounded-full bg-zinc-900/90 hover:bg-zinc-950 text-white border border-zinc-800 shadow-xl backdrop-blur-md text-xs font-semibold transition-all hover:scale-105 active:scale-95"
-        title="Toggle Developer Account Switcher"
+        className="flex items-center gap-2 px-3 py-1.5 rounded-md bg-zinc-900 hover:bg-zinc-800 text-white border border-zinc-800 shadow-md text-xs font-medium transition"
+        title="Demo Session Switcher (Ctrl+Shift+D)"
       >
         {isSwitching ? (
-          <Loader2 className="w-3.5 h-3.5 animate-spin text-blue-400" />
+          <Loader2 className="w-3.5 h-3.5 animate-spin text-zinc-300" />
         ) : (
-          <Wrench className="w-3.5 h-3.5 text-zinc-400 group-hover:text-amber-400 transition" />
+          <Terminal className="w-3.5 h-3.5 text-zinc-400" />
         )}
-        <span>Dev Switcher</span>
-
+        <span>Demo Role</span>
         {activePreset && (
-          <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-zinc-800 text-[10px] font-mono text-zinc-300 border border-zinc-700">
-            <span>{activePreset.avatar}</span>
-            <span className="hidden sm:inline">{activePreset.label}</span>
+          <span className="px-1.5 py-0.5 rounded bg-zinc-800 text-[10px] font-mono text-zinc-300">
+            {activePreset.code}
           </span>
         )}
       </button>

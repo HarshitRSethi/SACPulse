@@ -3,7 +3,7 @@ import { io, Socket } from 'socket.io-client';
 class SocketService {
   private static instance: SocketService;
   public socket: Socket | null = null;
-  private isConnecting: boolean = false;
+  private isConnecting = false;
 
   private constructor() {}
 
@@ -21,7 +21,6 @@ class SocketService {
 
     if (!this.socket && !this.isConnecting) {
       this.isConnecting = true;
-      // Connect through Vite proxy or backend directly
       const socketUrl = window.location.port === '5173' ? 'http://localhost:5001' : url;
       this.socket = io(socketUrl, {
         transports: ['websocket', 'polling'],
@@ -31,16 +30,10 @@ class SocketService {
 
       this.socket.on('connect', () => {
         this.isConnecting = false;
-        console.log('⚡ Socket.io connected:', this.socket?.id);
       });
 
-      this.socket.on('disconnect', () => {
-        console.log('❌ Socket.io disconnected');
-      });
-
-      this.socket.on('connect_error', (err) => {
+      this.socket.on('connect_error', () => {
         this.isConnecting = false;
-        console.warn('Socket connect error:', err.message);
       });
     }
 

@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import type { User, IncomingTransfer } from '../../types/index';
-import { Timer, ArrowRightLeft, Check, X, ShieldAlert } from 'lucide-react';
+import type { IncomingTransfer, User } from '../../types/index';
+import { ArrowRightLeft, ShieldAlert, Timer } from 'lucide-react';
 
 interface StudentBannersProps {
   user: User;
@@ -15,7 +15,6 @@ export const StudentBanners: React.FC<StudentBannersProps> = ({
   onAcceptTransfer,
   onDeclineTransfer
 }) => {
-  // Cooldown countdown timer
   const [cooldownRemaining, setCooldownRemaining] = useState<string | null>(null);
 
   useEffect(() => {
@@ -25,10 +24,7 @@ export const StudentBanners: React.FC<StudentBannersProps> = ({
     }
 
     const updateTimer = () => {
-      const penaltyTime = new Date(user.penaltyUntil!).getTime();
-      const now = Date.now();
-      const diff = penaltyTime - now;
-
+      const diff = new Date(user.penaltyUntil!).getTime() - Date.now();
       if (diff <= 0) {
         setCooldownRemaining(null);
       } else {
@@ -44,100 +40,82 @@ export const StudentBanners: React.FC<StudentBannersProps> = ({
     return () => clearInterval(interval);
   }, [user.penaltyUntil]);
 
+  if (!user.isDefaulter && !cooldownRemaining && incomingTransfers.length === 0) {
+    return null;
+  }
+
   return (
-    <aside aria-label="Student account notifications and alerts" className="space-y-3">
-      {/* 1. Red Defaulter Banner */}
+    <aside aria-label="Account alerts" className="space-y-2.5">
       {user.isDefaulter && (
-        <div className="rounded-2xl p-4 sm:p-5 bg-rose-50/90 border border-rose-200 shadow-xs flex items-start gap-3.5">
-          <div className="p-2 rounded-xl bg-rose-600 text-white flex-shrink-0">
-            <ShieldAlert className="w-5 h-5" />
-          </div>
-          <div className="flex-1">
-            <div className="flex items-center gap-2">
-              <h2 className="text-xs sm:text-sm font-bold text-rose-900 uppercase tracking-wider">
-                SAC Defaulter Account Flagged
-              </h2>
-              <span className="text-[10px] uppercase font-bold px-2 py-0.5 rounded-full bg-rose-200/80 text-rose-800">
-                Action Required
-              </span>
-            </div>
-            <p className="text-xs text-rose-700/90 mt-1 leading-relaxed">
-              Equipment previously issued to your roll number was reported damaged or missing by SAC staff.
-              New equipment requests and room key checkouts are suspended until you report to SAC Administration and clear this flag.
+        <div className="rounded-lg p-3.5 bg-red-50 border border-red-200 flex items-start gap-3">
+          <ShieldAlert className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
+          <div className="text-xs">
+            <h2 className="font-semibold text-red-900">
+              Account Restricted — Damaged Return Logged
+            </h2>
+            <p className="text-red-800/90 mt-0.5 leading-relaxed">
+              An item returned under your roll number was logged as damaged at the SAC
+              desk. Checkouts and incoming transfers remain locked until cleared by SAC
+              Administration.
             </p>
           </div>
         </div>
       )}
 
-      {/* 2. Orange 5-Hour Cooldown Timer Banner */}
       {cooldownRemaining && (
-        <div className="rounded-2xl p-4 sm:p-5 bg-amber-50/90 border border-amber-200 shadow-xs flex items-start gap-3.5">
-          <div className="p-2 rounded-xl bg-amber-500 text-white flex-shrink-0">
-            <Timer className="w-5 h-5" />
-          </div>
-          <div className="flex-1">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1">
-              <h2 className="text-xs sm:text-sm font-bold text-amber-900 uppercase tracking-wider flex items-center gap-2">
-                5-Hour Slot Hoarding Cooldown Active
+        <div className="rounded-lg p-3.5 bg-amber-50 border border-amber-200 flex items-start justify-between gap-3">
+          <div className="flex items-start gap-3 text-xs">
+            <Timer className="w-4 h-4 text-amber-700 shrink-0 mt-0.5" />
+            <div>
+              <h2 className="font-semibold text-amber-900">
+                Timeout Cooldown Active
               </h2>
-              <span className="font-mono text-xs font-bold text-amber-900 bg-amber-200/70 px-2 py-0.5 rounded-md">
-                {cooldownRemaining} remaining
-              </span>
+              <p className="text-amber-800/90 mt-0.5 leading-relaxed">
+                More than 3 counter pickup requests expired within 1 hour. Checkout access
+                resumes automatically when the cooldown ends.
+              </p>
             </div>
-            <p className="text-xs text-amber-800/90 mt-1 leading-relaxed">
-              You exceeded 3 unfulfilled requests within a 1-hour window. Under the SAC Fair Allocation Policy,
-              your checkout capability is temporarily paused.
-            </p>
+          </div>
+          <span className="font-mono text-xs font-semibold tabular-nums text-amber-900 bg-amber-100 px-2 py-0.5 rounded shrink-0">
+            {cooldownRemaining}
+          </span>
+        </div>
+      )}
+
+      {incomingTransfers.map((transfer) => (
+        <div
+          key={transfer.entryId}
+          className="rounded-lg p-3.5 bg-white border border-zinc-300 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+        >
+          <div className="flex items-start gap-3 text-xs">
+            <ArrowRightLeft className="w-4 h-4 text-zinc-700 shrink-0 mt-0.5" />
+            <div>
+              <span className="font-semibold text-zinc-900">
+                Incoming Peer Transfer: {transfer.itemName}
+              </span>
+              <p className="text-zinc-500 mt-0.5">
+                From <strong className="text-zinc-800">{transfer.fromStudentName}</strong>{' '}
+                (<span className="font-mono">{transfer.fromRollNo}</span>)
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 self-end sm:self-auto">
+            <button
+              onClick={() => onDeclineTransfer(transfer.entryId)}
+              className="px-3 py-1.5 rounded-md text-xs font-medium border border-zinc-200 bg-white hover:bg-zinc-50 text-zinc-700 transition"
+            >
+              Decline
+            </button>
+            <button
+              onClick={() => onAcceptTransfer(transfer.entryId)}
+              className="px-3 py-1.5 rounded-md text-xs font-medium bg-zinc-900 hover:bg-zinc-800 text-white transition"
+            >
+              Accept Responsibility
+            </button>
           </div>
         </div>
-      )}
-
-      {/* 3. Blue Incoming Transfer Cards */}
-      {incomingTransfers.length > 0 && (
-        <div className="space-y-2">
-          {incomingTransfers.map((transfer) => (
-            <div
-              key={transfer.entryId}
-              className="rounded-2xl p-4 sm:p-5 bg-blue-50/90 border border-blue-200 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3"
-            >
-              <div className="flex items-start gap-3">
-                <div className="p-2 rounded-xl bg-blue-600 text-white flex-shrink-0">
-                  <ArrowRightLeft className="w-5 h-5" />
-                </div>
-                <div>
-                  <div className="flex items-center gap-2">
-                    <h2 className="text-xs sm:text-sm font-bold text-blue-950">
-                      Incoming Equipment Transfer
-                    </h2>
-                    <span className="text-[10px] uppercase font-bold px-2 py-0.5 rounded-full bg-blue-200/70 text-blue-800">
-                      Peer Handover
-                    </span>
-                  </div>
-                  <p className="text-xs text-blue-900/90 mt-0.5">
-                    <strong className="text-zinc-900">{transfer.fromStudentName}</strong> ({transfer.fromRollNo})
-                    wants to transfer <strong className="text-blue-700">{transfer.itemName}</strong> ({transfer.category}) to you.
-                  </p>
-                </div>
-              </div>
-
-              <div className="flex items-center gap-2 self-end sm:self-auto">
-                <button
-                  onClick={() => onDeclineTransfer(transfer.entryId)}
-                  className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-white hover:bg-zinc-100 text-zinc-700 border border-zinc-200 transition flex items-center gap-1.5 shadow-xs"
-                >
-                  <X className="w-3.5 h-3.5" /> Decline
-                </button>
-                <button
-                  onClick={() => onAcceptTransfer(transfer.entryId)}
-                  className="px-3.5 py-1.5 rounded-xl text-xs font-bold bg-blue-600 hover:bg-blue-500 text-white shadow-xs transition flex items-center gap-1.5"
-                >
-                  <Check className="w-3.5 h-3.5" /> Accept Transfer
-                </button>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
+      ))}
     </aside>
   );
 };
