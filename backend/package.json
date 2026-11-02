@@ -7,11 +7,13 @@
   "main": "dist/presentation/server.js",
   "scripts": {
     "build": "tsc",
+    "typecheck": "tsc --noEmit",
     "dev": "tsx watch src/presentation/server.ts",
     "start": "node dist/presentation/server.js",
-    "test": "vitest run",
+    "test": "vitest run --testTimeout=15000",
+    "test:memory": "PERSISTENCE_DRIVER=memory vitest run",
     "test:watch": "vitest",
-    "seed": "tsx src/infrastructure.persistence/seed.ts"
+    "seed": "tsx src/infrastructure/persistence/seed.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.49.1",

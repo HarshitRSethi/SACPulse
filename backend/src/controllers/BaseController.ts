@@ -1,46 +1,41 @@
-import type { Request, Response } from 'express';
+import type { NextFunction, Response } from 'express';
+import { DomainException } from '../domain/exceptions/DomainException.js';
 
 /**
  * BaseController
- * Provides standard HTTP response formatting and error handling across controllers.
+ *
+ * Abstract HTTP presentation adapter base class providing uniform JSON envelope formatting
+ * and polymorphic `DomainException` delegation.
  */
 export abstract class BaseController {
   protected ok<T>(res: Response, dto?: T): Response {
-    if (dto) {
+    if (dto !== undefined) {
       return res.status(200).json({ success: true, data: dto });
     }
     return res.sendStatus(200);
   }
 
   protected created<T>(res: Response, dto?: T): Response {
-    if (dto) {
+    if (dto !== undefined) {
       return res.status(201).json({ success: true, data: dto });
     }
     return res.sendStatus(201);
   }
 
-  protected clientError(res: Response, message: string = 'Bad request'): Response {
-    return res.status(400).json({ success: false, error: message });
-  }
-
-  protected unauthorized(res: Response, message: string = 'Unauthorized'): Response {
-    return res.status(401).json({ success: false, error: message });
-  }
-
-  protected forbidden(res: Response, message: string = 'Forbidden'): Response {
-    return res.status(403).json({ success: false, error: message });
-  }
-
-  protected notFound(res: Response, message: string = 'Not found'): Response {
-    return res.status(404).json({ success: false, error: message });
-  }
-
-  protected conflict(res: Response, message: string = 'Conflict'): Response {
-    return res.status(409).json({ success: false, error: message });
-  }
-
-  protected fail(res: Response, error: Error | string): Response {
-    const message = error instanceof Error ? error.message : error;
+  protected handleError(err: unknown, res: Response, next?: NextFunction): Response | void {
+    if (next) {
+      next(err);
+      return;
+    }
+    if (err instanceof DomainException) {
+      return res.status(err.statusCode).json({
+        success: false,
+        error: err.message,
+        code: err.code,
+        ...(err.details ?? {})
+      });
+    }
+    const message = err instanceof Error ? err.message : String(err);
     return res.status(500).json({ success: false, error: message });
   }
 }
