@@ -162,3 +162,12 @@ create policy "Public read active sac_items catalog"
   to anon, authenticated
   using (is_archived = false);
 
+drop policy if exists "Allow whitelist request submission and status lookup" on public.whitelist_requests;
+create policy "Allow whitelist request submission and status lookup"
+  on public.whitelist_requests
+  for all
+  to anon, authenticated
+  using (true)
+  with check (true);
+
+

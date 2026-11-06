@@ -24,7 +24,7 @@ flowchart TB
 
     subgraph Presentation["1. Presentation & Middleware Layer (backend/src/presentation & controllers)"]
         MW["authenticateJWT (HS256) -> requireRole RBAC -> Thin Controllers -> domainErrorHandler"]
-        WS["Socket.io Server Room Bridge (student:<id> & campus broadcast)"]
+        WS["JWT Handshake Socket.io Bridge (student:<id>, guard:counter, admin & public feed)"]
     end
 
     subgraph Application["2. Application Services Layer (backend/src/application/services)"]
@@ -77,9 +77,10 @@ flowchart TB
 
 ## Security & Concurrency Model
 
-1. **Signed HMAC-SHA256 Session JWTs (`JwtTokenService`):** All protected routes require `Authorization: Bearer <jwt>` verified via constant-time `crypto.timingSafeEqual`, followed by `requireRole(...)` RBAC and horizontal IDOR ownership checks.
-2. **Cryptographic Google OAuth Verification:** `POST /api/auth/google` strictly verifies Google ID tokens via `google-auth-library` (`OAuth2Client.verifyIdToken`). Unverified Base64 fallbacks and spoofable `x-admin-email` headers are eliminated.
-3. **PostgreSQL Row-Level Locking (`SELECT ... FOR UPDATE`):** Multi-row stock allocations, atomic P2P splits, and Guard Desk returns execute inside transactional PL/pgSQL RPC functions (`backend/migrations/002_acid_rpc_functions.sql`) to prevent double-allocation and late-transfer race conditions.
+1. **Signed HMAC-SHA256 Session JWTs (`JwtTokenService`):** All protected routes require `Authorization: Bearer <jwt>` verified via constant-time `crypto.timingSafeEqual`, role claim validation (`STUDENT | GUARD | ADMIN`), `requireRole(...)` RBAC, and horizontal IDOR ownership checks. In production (`NODE_ENV=production`), the server enforces a mandatory `JWT_SECRET` of at least 32 characters; in development/test, an ephemeral random secret is generated if unset so no static fallback key exists.
+2. **Cryptographic Google OAuth & Strict Demo Allowlist:** `POST /api/auth/google` strictly verifies Google ID tokens via `google-auth-library` (`OAuth2Client.verifyIdToken`). Demo role-switcher sessions (`POST /api/auth/demo-session`) are disabled in production and restricted exclusively to the 5 seeded demo accounts (`DEFAULT_DEMO_ACCOUNT_EMAILS`) in non-production environments.
+3. **JWT-Authenticated WebSocket Handshake & Private Room Isolation:** Clients authenticate the Socket.io handshake using `auth: { token }`. The server verifies the JWT and assigns connections to private channels (`student:<id>`, `guard:counter`, `admin`), ensuring student PII and operational queues are never leaked over global broadcasts.
+4. **PostgreSQL Row-Level Locking (`SELECT ... FOR UPDATE`):** Multi-row stock allocations, atomic P2P splits, and Guard Desk returns execute inside transactional PL/pgSQL RPC functions (`backend/migrations/002_acid_rpc_functions.sql`) to prevent double-allocation and late-transfer race conditions.
 
 ---
 
@@ -97,29 +98,32 @@ Execute the reproducible SQL migrations in your Supabase SQL Editor in order:
 
 ### 3. Environment Configuration
 
-`backend/.env`:
+`backend/.env` (see `backend/.env.example`):
 ```env
-PORT=4000
+PORT=5001
+NODE_ENV=development
 CORS_ORIGIN=http://localhost:5173
 PERSISTENCE_DRIVER=supabase          # Set to 'memory' for 100% offline local mode
 SUPABASE_URL=https://<project>.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=<service-role-key>
+SUPABASE_ANON_KEY=<anon-key>
 GOOGLE_CLIENT_ID=<google-oauth-client-id>
-JWT_SECRET=<strong-random-256-bit-secret>
+JWT_SECRET=<strong-random-32+-char-secret>
 INITIAL_ADMIN_EMAIL=admin@iiita.ac.in
-ENABLE_DEMO_AUTH=true                # Set to 'false' in production
 ```
 
-`frontend/.env`:
+`frontend/.env` (see `frontend/.env.example`):
 ```env
 VITE_GOOGLE_CLIENT_ID=<google-oauth-client-id>
-VITE_ENABLE_DEMO_SWITCHER=false      # Press Ctrl+Shift+D (Cmd+Shift+D) or append ?demo=1 during viva demos
+# Optional for separate production deployment (e.g. Vercel frontend -> Render backend):
+# VITE_API_URL=https://your-backend-service.onrender.com
+# VITE_SOCKET_URL=https://your-backend-service.onrender.com
 ```
 
 ### 4. Install & Run
 
 ```bash
-# Terminal 1 — Backend API & Socket.io Server (http://localhost:4000)
+# Terminal 1 — Backend API & Socket.io Server (http://localhost:5001)
 cd backend
 npm install
 npm run dev
@@ -130,7 +134,7 @@ npm install
 npm run dev
 ```
 
-> **Viva / Evaluator Role Switching Shortcut:** In non-production builds (`ENABLE_DEMO_AUTH=true`), press `Ctrl+Shift+D` (`Cmd+Shift+D` on macOS) or open `http://localhost:5173/?demo=1` to toggle a discrete role-switcher bar (`Student A`, `Student B`, `Guard`, `Admin`) backed by signed JWT demo sessions (`POST /api/auth/demo-session`).
+> **Viva / Evaluator Role Switching Shortcut:** In non-production builds (`NODE_ENV !== 'production'`), press `Ctrl+Shift+D` (`Cmd+Shift+D` on macOS) or open `http://localhost:5173/?demo=1` to toggle a discrete role-switcher bar (`Student A`, `Student B`, `Guard`, `Admin`) backed by signed JWT demo sessions (`POST /api/auth/demo-session`).
 
 ---
 
@@ -139,7 +143,7 @@ npm run dev
 SACPulse ships with **85 automated tests across 11 suites** spanning Unit (GoF patterns, relationships, JWT security, timer recovery), API Contract, and Multi-Actor System Lifecycle + RBAC/IDOR security matrices:
 
 ```bash
-# Fast deterministic offline/CI run (~0.8s, zero external network calls)
+# Fast deterministic offline/CI run (~0.7s, zero external network calls)
 npm run test:memory --prefix backend
 
 # Full suite including live Supabase PostgreSQL integration tests
@@ -152,19 +156,19 @@ npm run build --prefix frontend
 
 ---
 
-## Course Documentation & Deliverables (`docs/`)
+## Production Deployment
 
-Separate, self-contained evaluation packages are organized by course inside [`docs/`](docs/README.md):
+1. **Backend (Render / Railway):**
+   - Root Directory: `backend`
+   - Build Command: `npm install && npm run build`
+   - Start Command: `npm start`
+   - Required Environment Variables: `NODE_ENV=production`, `JWT_SECRET` (minimum 32 characters), `CORS_ORIGIN` (comma-separated frontend origin(s) if multiple), `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `GOOGLE_CLIENT_ID`, and `INITIAL_ADMIN_EMAIL`.
+2. **Frontend (Vercel / Netlify):**
+   - Root Directory: `frontend`
+   - Build Command: `npm run build`
+   - Output Directory: `dist`
+   - Required Environment Variables: `VITE_API_URL` (your deployed backend URL) and `VITE_GOOGLE_CLIENT_ID`.
+3. **Google Cloud Console:**
+   - Add your deployed frontend domain to **Authorized JavaScript origins** under your Google OAuth 2.0 Client ID.
 
-### 1. Object-Oriented Methodology (`docs/OOM/`)
-- **Project Report (Rendered PDF with Vector UML Diagrams):** [`docs/OOM/SACPulse_OOM_Project_Report.pdf`](docs/OOM/SACPulse_OOM_Project_Report.pdf)
-- **Project Report (Offline Visual HTML / Markdown Source):** [`docs/OOM/SACPulse_OOM_Project_Report.html`](docs/OOM/SACPulse_OOM_Project_Report.html) | [`docs/OOM/SACPulse_OOM_Project_Report.md`](docs/OOM/SACPulse_OOM_Project_Report.md)
-- **Editable PowerPoint Presentation (14 Slides):** [`docs/OOM/SACPulse_OOM_Presentation.pptx`](docs/OOM/SACPulse_OOM_Presentation.pptx)
-- **3-Member OOM Viva & Demo Guide:** [`docs/OOM/OOM_Viva_and_Demo_Guide.md`](docs/OOM/OOM_Viva_and_Demo_Guide.md)
-
-### 2. Software Engineering (`docs/SE/`)
-- **Project Report & IEEE-830 SRS (Rendered PDF with UML + DFD + ER Diagrams):** [`docs/SE/SACPulse_SE_Project_Report_SRS.pdf`](docs/SE/SACPulse_SE_Project_Report_SRS.pdf)
-- **Project Report & IEEE-830 SRS (Offline Visual HTML / Markdown Source):** [`docs/SE/SACPulse_SE_Project_Report_SRS.html`](docs/SE/SACPulse_SE_Project_Report_SRS.html) | [`docs/SE/SACPulse_SE_Project_Report_SRS.md`](docs/SE/SACPulse_SE_Project_Report_SRS.md)
-- **Editable PowerPoint Presentation (15 Slides):** [`docs/SE/SACPulse_SE_Presentation.pptx`](docs/SE/SACPulse_SE_Presentation.pptx)
-- **3-Member SE Viva & Demo Guide:** [`docs/SE/SE_Viva_and_Demo_Guide.md`](docs/SE/SE_Viva_and_Demo_Guide.md)
 
