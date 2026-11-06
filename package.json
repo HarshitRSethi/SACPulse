@@ -2,9 +2,10 @@
   "name": "sacpulse-root",
   "version": "1.0.0",
   "private": true,
-  "description": "SACPulse - College SAC Room & Equipment Digital Register + Live Status",
+  "description": "SACPulse — Real-Time Asset Ledger, Concurrency-Safe Inventory & Peer-to-Peer Handoff Engine",
   "scripts": {
     "test": "npm test --prefix backend",
+    "test:memory": "npm run test:memory --prefix backend",
     "seed": "npm run seed --prefix backend",
     "dev:backend": "npm run dev --prefix backend",
     "build:backend": "npm run build --prefix backend",
@@ -13,11 +14,12 @@
   },
   "keywords": [
     "sacpulse",
-    "iiita",
+    "inventory-engine",
     "digital-register",
-    "oop",
-    "supabase"
+    "clean-architecture",
+    "supabase",
+    "websockets"
   ],
-  "author": "Antigravity & IIITA SACPulse Team",
+  "author": "Harshit Sethi",
   "license": "MIT"
 }

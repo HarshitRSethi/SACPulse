@@ -1,174 +1,260 @@
-# SACPulse — Campus Activity Centre Digital Register & Real-Time Inventory Engine
+<div align="center">
 
-**SACPulse** replaces the paper-bound entry ledger at the **IIIT Allahabad Student Activity Centre (SAC)** with a real-time, concurrency-safe equipment and room-key operations platform. Students check live equipment availability before walking across campus, submit time-bounded counter checkout requests, transfer held gear peer-to-peer via atomic ledger splits, and clear returns at the Guard Desk without paper bottlenecks.
+# SACPulse
+
+### Real-Time Asset Ledger, Concurrency-Safe Inventory & Peer-to-Peer Handoff Engine
+
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.8-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
+[![React 19](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black)](https://react.dev/)
+[![Node.js](https://img.shields.io/badge/Node.js-20%2B-339933?logo=nodedotjs&logoColor=white)](https://nodejs.org/)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-Supabase-4169E1?logo=postgresql&logoColor=white)](https://supabase.com/)
+[![Socket.io](https://img.shields.io/badge/Socket.io-4.8-010101?logo=socketdotio&logoColor=white)](https://socket.io/)
+[![Tests](https://img.shields.io/badge/Tests-85%20Passing-10B981?logo=vitest&logoColor=white)](#testing--quality-assurance)
+
+**SACPulse** is a full-stack, event-driven inventory and digital register platform engineered for high-traffic Student Activity Centres (SAC). It replaces paper-bound equipment ledgers with live stock telemetry, server-authoritative reservation timers, row-locked ACID counter checkouts, and atomic peer-to-peer (P2P) asset transfers.
+
+</div>
 
 ---
 
-## Core Operational Workflows
+## Why SACPulse?
 
-- **Privacy-Safe Live Campus Feed:** Students view real-time availability for multi-unit sports gear (`SportsEquipment`) and singleton activity room keys (`RoomKey`). Occupied rooms expose *"Occupied since HH:MM"* (and flag Faculty Sessions automatically) without leaking active student names or phone numbers.
-- **Institutional Google OAuth & External Staff Whitelist:** `@iiita.ac.in` accounts auto-provision as `STUDENT` with parsed Roll Numbers and one-time Indian mobile verification. External staff (`@gmail.com`) authenticate only through a Root-Admin-governed whitelist (`GUARD` / `ADMIN` / `STUDENT`).
-- **Authoritative 120-Second Counter Walk-Up TTL:** Checkout requests run on an authoritative server-clock timer (`IssueRequestTTLScheduler`) with boot-time crash recovery. Exceeding 3 timeouts within a sliding 1-hour window imposes an automatic 5-hour borrowing cooldown.
-- **Batch Counter Issuance & Defaulter Governance:** Guard approval expands multi-unit bundles into individual physical unit rows (`RegisterEntry`) grouped under a shared `CheckoutBatch` (`batch_id`). Marking a returned unit `DAMAGED` permanently removes it from functional stock and locks the current holder as a `DEFAULTER` until cleared by an Administrator.
-- **Atomic Peer-to-Peer (P2P) Transfers:** An active holder can transfer a single unit out of a multi-unit batch to an eligible peer by Roll Number. Acceptance executes an ACID row split (`RETURNED_VIA_TRANSFER` on Holder A + new `ISSUED` row on Holder B under the shared `batch_id`), while physical Guard Desk returns override any pending P2P offer immediately.
+High-density campus recreation facilities process hundreds of daily checkouts across multi-unit sports gear and singleton activity rooms. Paper registers break down under peak load:
+
+* **Blind Walk-Ups:** Students walk across campus without knowing whether courts, rooms, or equipment are in stock.
+* **Counter Bottlenecks & Ghost Reservations:** Unclaimed requests tie up scarce inventory unless governed by strict, crash-recoverable server TTLs.
+* **Untracked Peer Handoffs:** When students pass equipment to peers on the court, paper logs leave the original borrower liable for lost or damaged gear.
+* **Privacy Exposure:** Paper ledgers and naive dashboards expose students' names and phone numbers publicly.
+
+**SACPulse** solves these problems with a zero-trust, real-time state engine backed by PostgreSQL row-level locking (`SELECT ... FOR UPDATE`) and role-scoped WebSocket channels.
 
 ---
 
-## 5-Layer Clean OOP Architecture
+## Key Capabilities
+
+### 1. Live Privacy-Safe Campus Telemetry
+* Real-time availability feed for multi-unit equipment (`SportsEquipment`) and singleton room keys (`RoomKey`).
+* Active rooms broadcast occupancy duration (*"Occupied since HH:MM"*) and Faculty/Event overrides without exposing student PII (names, roll numbers, or phone numbers) to the public feed.
+
+### 2. Server-Authoritative 120s Walk-Up TTL & Abuse Cooldowns
+* Checkout requests start an authoritative 120-second server countdown (`IssueRequestTTLScheduler`) with automatic boot-time crash recovery.
+* **Sliding-Window Rate Limiting:** Accumulating 3 expired walk-up requests within a 1-hour sliding window automatically triggers a 5-hour borrowing cooldown.
+
+### 3. Transactional Batch Issuance & Defaulter Governance
+* Counter approval expands multi-item requests into unit-level ledger rows (`RegisterEntry`) grouped under a shared `CheckoutBatch` (`batch_id`).
+* Returning a unit as **Intact** immediately restores functional stock; marking a unit **Damaged** permanently decrements available inventory and locks the holder as a `DEFAULTER` until cleared by an Administrator.
+
+### 4. Atomic Peer-to-Peer (P2P) Ownership Splits
+* Active holders can transfer individual units from a multi-unit batch to another eligible student by Roll Number.
+* Acceptance executes an ACID transaction that closes the sender's ledger entry (`RETURNED_VIA_TRANSFER`) and opens a new `ISSUED` entry for the recipient under the original `batch_id`.
+* Physical counter returns always take precedence, automatically voiding any in-flight P2P transfer offer.
+
+### 5. Role-Based Consoles & External Staff Governance
+* **Student Console:** Live catalog filtering, multi-item cart, real-time walk-up countdown, active holdings, and P2P transfer management.
+* **Guard Counter Console:** Instant walk-up queue approval, unit/batch return processing, damage flagging, and faculty room overrides.
+* **Admin Governance Console:** Paginated master register audit logs with RFC-4180 CSV export, inventory CRUD, defaulter/cooldown overrides, and hierarchical staff whitelist management.
+
+---
+
+## System Architecture
+
+SACPulse follows a strict **5-Layer Clean Architecture** where the Domain Core has zero framework or database dependencies:
 
 ```mermaid
 flowchart TB
-    subgraph Client["Presentation Client (React 19 + TypeScript + Tailwind + Socket.io)"]
-        UI["Modular Role Consoles: Student | Guard Counter | Admin Governance"]
+    subgraph Client["Client Layer (React 19 + TypeScript + Tailwind CSS + Socket.io)"]
+        UI["Role-Scoped Workspaces: Student Console | Guard Desk | Admin Governance"]
     end
 
-    subgraph Presentation["1. Presentation & Middleware Layer (backend/src/presentation & controllers)"]
-        MW["authenticateJWT (HS256) -> requireRole RBAC -> Thin Controllers -> domainErrorHandler"]
-        WS["JWT Handshake Socket.io Bridge (student:<id>, guard:counter, admin & public feed)"]
+    subgraph Presentation["1. Presentation & Security Layer (Express + Socket.io)"]
+        MW["HS256 JWT Auth -> RBAC Middleware -> Thin Controllers -> Domain Error Translator"]
+        WS["Authenticated WebSocket Gateway (Rooms: student:<id> | guard:counter | admin)"]
     end
 
-    subgraph Application["2. Application Services Layer (backend/src/application/services)"]
-        AS["AuthService | InventoryQueryService | CheckoutService"]
-        AS2["GuardCounterService | PeerTransferService | AdminGovernanceService"]
-        SCHED["IssueRequestTTLScheduler (Singleton) & RealtimeEventHub (Observer)"]
+    subgraph Application["2. Application Services Layer"]
+        SVC1["AuthService | InventoryQueryService | CheckoutService"]
+        SVC2["GuardCounterService | PeerTransferService | AdminGovernanceService"]
+        HUB["IssueRequestTTLScheduler & RealtimeEventHub"]
     end
 
-    subgraph Domain["3. Domain Core Layer (backend/src/domain — Zero Framework Dependencies)"]
-        ENT["Entities & Composites: User/Student/Guard/Admin | SACItem/SportsEquipment/RoomKey"]
-        REL["CheckoutBatch (*--) | IssueRequest (*-- RequestLineItem) | InventoryCatalog (o--)"]
-        PAT["GoF State (IRegisterEntryState) | GoF Strategy (IPenaltyStrategy) | GoF Factories"]
-        DIP["Repository Interfaces (IUserRepo, ISACItemRepo, IIssueRequestRepo, IRegisterLogRepo)"]
+    subgraph Domain["3. Domain Core Layer (Pure TypeScript — Zero External Dependencies)"]
+        ENT["Entities: User / Student / Guard / Admin | SACItem / SportsEquipment / RoomKey"]
+        AGG["Aggregates: CheckoutBatch | IssueRequest | RegisterEntry"]
+        MOD["State Machine (IRegisterEntryState) & Penalty Policies (IPenaltyStrategy)"]
+        REPO["Repository Contracts (IUserRepo, ISACItemRepo, IIssueRequestRepo, IRegisterLogRepo)"]
     end
 
-    subgraph Infrastructure["4. Infrastructure & Persistence Layer (backend/src/infrastructure/persistence)"]
-        SUPA["Supabase*Repository (HTTPS REST + PL/pgSQL FOR UPDATE ACID RPCs)"]
-        MEM["InMemory*Repository (Deterministic ACID Store for Offline Dev & CI)"]
+    subgraph Infrastructure["4. Infrastructure & Persistence Layer"]
+        PG["Supabase / PostgreSQL (Row-Level Security + PL/pgSQL FOR UPDATE RPCs)"]
+        MEM["In-Memory ACID Store (Deterministic Zero-Latency Engine for Local Dev & CI)"]
     end
 
-    UI <-->|"REST + Bearer JWT"| MW
-    UI <-->|"WebSocket Push"| WS
-    MW --> AS
-    MW --> AS2
-    SCHED --> WS
-    AS --> ENT
-    AS2 --> ENT
-    AS --> DIP
-    AS2 --> DIP
-    ENT --> REL
-    ENT --> PAT
-    SUPA -.->|"implements"| DIP
-    MEM -.->|"implements"| DIP
+    UI <-->|"REST API (Bearer JWT)"| MW
+    UI <-->|"Real-Time Events"| WS
+    MW --> SVC1 & SVC2
+    HUB --> WS
+    SVC1 & SVC2 --> ENT & AGG & MOD & REPO
+    PG -.->|"implements"| REPO
+    MEM -.->|"implements"| REPO
 ```
 
 ---
 
-## Gang-of-Four (GoF) Design Patterns & OOP Principles
+## Engineering Highlights
 
-| Pattern / Principle | Category | Production Implementation | Purpose |
+| Area | Implementation Details |
+| :--- | :--- |
+| **Database Concurrency & ACID RPCs** | Critical multi-row mutations (`approve_issue_request_tx`, `execute_transfer_split_tx`, `close_guard_return_tx`, `close_guard_batch_return_tx`) run inside PostgreSQL PL/pgSQL transactions using `SELECT ... FOR UPDATE` row-level locks to eliminate double-allocation and race conditions. |
+| **Explicit Ledger State Machine** | Every issued unit (`RegisterEntry`) transitions through strongly typed state objects (`IssuedState`, `TransferPendingState`, `ReturnedState`, `ReturnedViaTransferState`, `DamagedState`), preventing illegal transitions at compile and runtime. |
+| **Zero-Trust Auth & IDOR Protection** | Google OAuth 2.0 ID tokens are cryptographically verified via `google-auth-library`. Session JWTs use constant-time `crypto.timingSafeEqual` HMAC-SHA256 verification, strict RBAC middleware, and horizontal ownership checks to block IDOR across student profiles, holdings, and transfers. |
+| **Private WebSocket Room Isolation** | Socket.io connections verify the Bearer JWT during the handshake and bind sockets to isolated rooms (`student:<id>`, `guard:counter`, `admin`), ensuring student contact details and queue updates are never broadcast to unauthorized clients. |
+| **Pluggable Persistence Drivers** | Repository interfaces allow switching between **Supabase PostgreSQL** (`PERSISTENCE_DRIVER=supabase`) and a deterministic **In-Memory Store** (`PERSISTENCE_DRIVER=memory`) via a single environment variable. |
+
+---
+
+## Tech Stack
+
+* **Frontend:** React 19, TypeScript 5.8, Vite 6, Tailwind CSS 3, Socket.io Client, Lucide Icons, `@react-oauth/google`
+* **Backend:** Node.js 20+, Express 4, TypeScript (NodeNext ESM), Socket.io 4, `google-auth-library`
+* **Database:** PostgreSQL (Supabase), PL/pgSQL Transactional RPCs, Row-Level Security (RLS)
+* **Testing & CI:** Vitest (Unit, API Contract, and Multi-Actor System Lifecycle suites), GitHub Actions CI
+
+---
+
+## API Overview
+
+| Method | Endpoint | Access | Description |
 | :--- | :--- | :--- | :--- |
-| **State Pattern** | Behavioral | `backend/src/domain/states/IRegisterEntryState.ts` (`IssuedState`, `TransferPendingState`, `ReturnedState`, `ReturnedViaTransferState`, `DamagedState`) | Encapsulates legal unit transitions, P2P locks, atomic transfer splits, and Guard Desk return overrides without status `if/else` chains. |
-| **Template Method** | Behavioral | `backend/src/domain/entities/SACItem.ts` (`checkout()`, `checkin()`) | Defines invariant validation and post-mutation hooks while deferring polymorphic stock/occupancy rules to `SportsEquipment` and `RoomKey`. |
-| **Strategy Pattern** | Behavioral | `backend/src/domain/strategies/IPenaltyStrategy.ts` (`SlidingWindowCooldownStrategy`, `StrictPeakHoursPenaltyStrategy`) + `IEligibilityRule.ts` | Allows runtime swapping of walk-up TTL windows, strike thresholds, and cooldown durations across `CheckoutService` and `IssueRequestTTLScheduler`. |
-| **Factory Method** | Creational | `backend/src/domain/factories/SACItemFactory.ts`, `UserFactory.ts` | Centralizes polymorphic hydration of `SportsEquipment` vs `RoomKey` and `Student` vs `Guard` vs `Admin`. |
-| **Observer + Singleton** | Behavioral / Creational | `backend/src/application/services/RealtimeEventHub.ts`, `IssueRequestTTLScheduler.ts` | Decouples domain mutations and server-clock TTL expirations from Socket.io transport channels. |
-| **Repository (SOLID DIP)** | Architectural / SOLID | `backend/src/domain/repositories/*` implemented by `Supabase*Repository` & `InMemory*Repository` | Enables identical domain/service execution against live Supabase PostgreSQL or deterministic in-memory CI storage. |
+| `POST` | `/api/auth/google` | Public | Verify Google OAuth ID token and issue signed HS256 session JWT |
+| `PATCH` | `/api/auth/mobile-setup` | Authenticated | Complete one-time 10-digit Indian mobile number verification |
+| `POST` | `/api/auth/request-whitelist` | Public | Submit external staff/guest access request for Admin review |
+| `GET` | `/api/inventory` | Public | Fetch live, privacy-safe equipment & room availability feed |
+| `POST` | `/api/issue-requests` | `STUDENT` | Create a 120-second TTL walk-up checkout request |
+| `GET` | `/api/issue-requests/my-pending` | `STUDENT` | Fetch active pending request for the authenticated student |
+| `GET` | `/api/guard/requests/pending` | `GUARD`, `ADMIN` | List live walk-up queue at the SAC Counter |
+| `POST` | `/api/guard/requests/:id/approve` | `GUARD`, `ADMIN` | Atomically lock stock and issue unit-level register entries |
+| `POST` | `/api/guard/returns/:entryId/intact` | `GUARD`, `ADMIN` | Process intact single-unit return and restore stock |
+| `POST` | `/api/guard/returns/batch/:batchId/intact` | `GUARD`, `ADMIN` | Return all remaining active units in a checkout batch |
+| `POST` | `/api/guard/returns/:entryId/damaged` | `GUARD`, `ADMIN` | Mark unit damaged, decrement stock, and flag holder as Defaulter |
+| `POST` | `/api/guard/rooms/:id/faculty-occupy` | `GUARD`, `ADMIN` | Override activity room key for a faculty/event session |
+| `POST` | `/api/transfers/:entryId/initiate` | `STUDENT` | Initiate P2P transfer offer to a peer by Roll Number |
+| `POST` | `/api/transfers/:entryId/respond` | `STUDENT` | Accept (atomic row split) or reject an incoming P2P transfer |
+| `GET` | `/api/admin/register-logs` | `ADMIN` | Query paginated master ledger or export RFC-4180 CSV (`?format=csv`) |
+| `POST` | `/api/admin/inventory` | `ADMIN` | Create or update SAC equipment and room catalog items |
+| `POST` | `/api/admin/users/:id/clear-defaulter` | `ADMIN` | Clear student defaulter lock or reset timeout cooldown |
+| `POST` | `/api/admin/whitelist/approve` | `ADMIN` | Approve external staff whitelist request (Root Admin for `ADMIN` role) |
 
 ---
 
-## Security & Concurrency Model
+## Project Structure
 
-1. **Signed HMAC-SHA256 Session JWTs (`JwtTokenService`):** All protected routes require `Authorization: Bearer <jwt>` verified via constant-time `crypto.timingSafeEqual`, role claim validation (`STUDENT | GUARD | ADMIN`), `requireRole(...)` RBAC, and horizontal IDOR ownership checks. In production (`NODE_ENV=production`), the server enforces a mandatory `JWT_SECRET` of at least 32 characters; in development/test, an ephemeral random secret is generated if unset so no static fallback key exists.
-2. **Cryptographic Google OAuth & Strict Demo Allowlist:** `POST /api/auth/google` strictly verifies Google ID tokens via `google-auth-library` (`OAuth2Client.verifyIdToken`). Demo role-switcher sessions (`POST /api/auth/demo-session`) are disabled in production and restricted exclusively to the 5 seeded demo accounts (`DEFAULT_DEMO_ACCOUNT_EMAILS`) in non-production environments.
-3. **JWT-Authenticated WebSocket Handshake & Private Room Isolation:** Clients authenticate the Socket.io handshake using `auth: { token }`. The server verifies the JWT and assigns connections to private channels (`student:<id>`, `guard:counter`, `admin`), ensuring student PII and operational queues are never leaked over global broadcasts.
-4. **PostgreSQL Row-Level Locking (`SELECT ... FOR UPDATE`):** Multi-row stock allocations, atomic P2P splits, and Guard Desk returns execute inside transactional PL/pgSQL RPC functions (`backend/migrations/002_acid_rpc_functions.sql`) to prevent double-allocation and late-transfer race conditions.
+```text
+SACPulse/
+├── backend/
+│   ├── migrations/
+│   │   ├── 001_initial_schema.sql          # Tables, constraints, indexes & RLS policies
+│   │   └── 002_acid_rpc_functions.sql      # PL/pgSQL FOR UPDATE transactional RPCs
+│   ├── src/
+│   │   ├── domain/                         # Entities, Aggregates, State Machine, Strategies & Interfaces
+│   │   ├── application/services/           # Use-case orchestration, JWT service, TTL scheduler & EventHub
+│   │   ├── infrastructure/persistence/     # Supabase & In-Memory repository implementations
+│   │   ├── controllers/                    # Thin HTTP controllers
+│   │   └── presentation/                   # Express app, routes, JWT/RBAC middleware & Socket.io server
+│   └── tests/                              # 85 unit, API integration & multi-actor system tests
+└── frontend/
+    └── src/
+        ├── components/
+        │   ├── auth/                       # Google OAuth sign-in, mobile onboarding & access request UI
+        │   ├── student/                    # Live catalog, walk-up tracker, holdings & P2P transfer modals
+        │   ├── guard/                      # Live counter queue, active register, return & room controls
+        │   └── admin/                      # Master audit log, CSV export, catalog CRUD & whitelist console
+        └── services/                       # Typed REST client & JWT-authenticated Socket.io singleton
+```
 
 ---
 
-## Quick Start
+## Getting Started
 
-### 1. Prerequisites
-- **Node.js** `>= 20.x`
-- **Supabase PostgreSQL Project** (optional for local/offline mode — set `PERSISTENCE_DRIVER=memory` to run completely offline with seeded campus data)
+### Prerequisites
+* **Node.js** `>= 20.x`
+* **Supabase Project** *(optional — set `PERSISTENCE_DRIVER=memory` to run 100% offline with pre-seeded data)*
 
-### 2. Database Setup (Supabase Mode)
-Execute the reproducible SQL migrations in your Supabase SQL Editor in order:
-1. `backend/migrations/001_initial_schema.sql` (6 tables, constraints, indexes, RLS policies)
-2. `backend/migrations/002_acid_rpc_functions.sql` (4 transactional ACID RPC functions)
-3. Seed realistic campus data via `npm run seed --prefix backend` (or `backend/src/infrastructure/persistence/seed.sql`)
+### 1. Clone & Install Dependencies
 
-### 3. Environment Configuration
+```bash
+git clone <your-repo-url>
+cd SACPulse
 
-`backend/.env` (see `backend/.env.example`):
+cd backend && npm install
+cd ../frontend && npm install
+```
+
+### 2. Configure Environment Variables
+
+Copy the example environment files in both workspaces:
+
+```bash
+cp backend/.env.example backend/.env
+cp frontend/.env.example frontend/.env
+```
+
+**`backend/.env`:**
 ```env
 PORT=5001
 NODE_ENV=development
 CORS_ORIGIN=http://localhost:5173
-PERSISTENCE_DRIVER=supabase          # Set to 'memory' for 100% offline local mode
+PERSISTENCE_DRIVER=memory            # Use 'memory' for instant offline mode, or 'supabase' for PostgreSQL
 SUPABASE_URL=https://<project>.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=<service-role-key>
 SUPABASE_ANON_KEY=<anon-key>
-GOOGLE_CLIENT_ID=<google-oauth-client-id>
-JWT_SECRET=<strong-random-32+-char-secret>
+GOOGLE_CLIENT_ID=<google-oauth-client-id>.apps.googleusercontent.com
+JWT_SECRET=<at-least-32-character-random-secret>
 INITIAL_ADMIN_EMAIL=admin@iiita.ac.in
 ```
 
-`frontend/.env` (see `frontend/.env.example`):
+**`frontend/.env`:**
 ```env
-VITE_GOOGLE_CLIENT_ID=<google-oauth-client-id>
-# Optional for separate production deployment (e.g. Vercel frontend -> Render backend):
-# VITE_API_URL=https://your-backend-service.onrender.com
-# VITE_SOCKET_URL=https://your-backend-service.onrender.com
+VITE_GOOGLE_CLIENT_ID=<google-oauth-client-id>.apps.googleusercontent.com
+# Optional when deploying frontend and backend on separate hosts:
+# VITE_API_URL=https://your-backend.onrender.com
+# VITE_SOCKET_URL=https://your-backend.onrender.com
 ```
 
-### 4. Install & Run
+### 3. Database Setup (When Using `PERSISTENCE_DRIVER=supabase`)
+
+Run the SQL migrations in the Supabase SQL Editor in order:
+1. `backend/migrations/001_initial_schema.sql`
+2. `backend/migrations/002_acid_rpc_functions.sql`
+3. Seed initial data with `npm run seed --prefix backend`
+
+### 4. Run Development Servers
 
 ```bash
-# Terminal 1 — Backend API & Socket.io Server (http://localhost:5001)
-cd backend
-npm install
-npm run dev
+# Terminal 1 — Backend API & WebSocket Server (http://localhost:5001)
+npm run dev:backend
 
-# Terminal 2 — Frontend Vite Client (http://localhost:5173)
-cd frontend
-npm install
-npm run dev
+# Terminal 2 — Frontend Client (http://localhost:5173)
+npm run dev:frontend
 ```
 
-> **Viva / Evaluator Role Switching Shortcut:** In non-production builds (`NODE_ENV !== 'production'`), press `Ctrl+Shift+D` (`Cmd+Shift+D` on macOS) or open `http://localhost:5173/?demo=1` to toggle a discrete role-switcher bar (`Student A`, `Student B`, `Guard`, `Admin`) backed by signed JWT demo sessions (`POST /api/auth/demo-session`).
+> **Local Role Switcher (Development Only):** Press `Ctrl+Shift+D` (`Cmd+Shift+D` on macOS) or append `?demo=1` to `http://localhost:5173/?demo=1` to toggle the local role-switcher (`Student A`, `Student B`, `Guard`, `Admin`) for testing multi-actor workflows side-by-side.
 
 ---
 
-## Verification & Testing Suite
+## Testing & Quality Assurance
 
-SACPulse ships with **85 automated tests across 11 suites** spanning Unit (GoF patterns, relationships, JWT security, timer recovery), API Contract, and Multi-Actor System Lifecycle + RBAC/IDOR security matrices:
+SACPulse includes **85 automated tests across 11 suites** covering domain state machines, penalty strategies, JWT cryptography, TTL timer recovery, REST API contracts, and multi-actor RBAC/IDOR security boundaries:
 
 ```bash
-# Fast deterministic offline/CI run (~0.7s, zero external network calls)
+# Run full test suite against the deterministic in-memory engine (~0.7s)
 npm run test:memory --prefix backend
 
-# Full suite including live Supabase PostgreSQL integration tests
+# Run integration tests against live Supabase PostgreSQL
 npm test --prefix backend
 
-# Strict TypeScript & Vite production builds
-npm run build --prefix backend
-npm run build --prefix frontend
+# Verify production TypeScript & Vite builds
+npm run build:backend
+npm run build:frontend
 ```
 
 ---
-
-## Production Deployment
-
-1. **Backend (Render / Railway):**
-   - Root Directory: `backend`
-   - Build Command: `npm install && npm run build`
-   - Start Command: `npm start`
-   - Required Environment Variables: `NODE_ENV=production`, `JWT_SECRET` (minimum 32 characters), `CORS_ORIGIN` (comma-separated frontend origin(s) if multiple), `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `GOOGLE_CLIENT_ID`, and `INITIAL_ADMIN_EMAIL`.
-2. **Frontend (Vercel / Netlify):**
-   - Root Directory: `frontend`
-   - Build Command: `npm run build`
-   - Output Directory: `dist`
-   - Required Environment Variables: `VITE_API_URL` (your deployed backend URL) and `VITE_GOOGLE_CLIENT_ID`.
-3. **Google Cloud Console:**
-   - Add your deployed frontend domain to **Authorized JavaScript origins** under your Google OAuth 2.0 Client ID.
-
-
