@@ -77,23 +77,16 @@ export default function App() {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, []);
 
-  // Initialize Socket.io connection & listen for targeted student room notifications
+  // Initialize the Socket.io connection, authenticated with the current session JWT.
+  // The server assigns rooms from the verified token, so whenever the session changes
+  // (login, logout, demo role switch, 401) the socket reconnects with the new token.
   useEffect(() => {
-    const socket = socketService.connect();
+    const socket = socketService.connect(sessionToken);
 
-    const handleConnect = () => {
-      setIsSocketConnected(true);
-      if (currentUser?.role === 'STUDENT') {
-        socketService.joinStudent(currentUser.id);
-      } else if (currentUser?.role === 'GUARD') {
-        socketService.joinGuard();
-      }
-    };
+    const handleConnect = () => setIsSocketConnected(true);
     const handleDisconnect = () => setIsSocketConnected(false);
 
-    if (socket.connected) {
-      handleConnect();
-    }
+    if (socket.connected) handleConnect();
 
     socket.on('connect', handleConnect);
     socket.on('disconnect', handleDisconnect);
@@ -102,7 +95,7 @@ export default function App() {
       socket.off('connect', handleConnect);
       socket.off('disconnect', handleDisconnect);
     };
-  }, [currentUser?.id, currentUser?.role]);
+  }, [sessionToken]);
 
   const refreshCurrentUser = useCallback(async () => {
     if (!currentUser) return;
@@ -119,10 +112,8 @@ export default function App() {
   }, [currentUser]);
 
   useEffect(() => {
-    const socket = socketService.socket;
-    if (!socket || !currentUser || currentUser.role !== 'STUDENT') return;
-
-    socketService.joinStudent(currentUser.id);
+    if (!currentUser || currentUser.role !== 'STUDENT') return;
+    const socket = socketService.connect();
 
     const handleStudentNotification = (payload: StudentRealtimeNotification) => {
       if (payload.studentId && payload.studentId !== currentUser.id) return;

@@ -39,13 +39,15 @@ lerna-debug.log*
 # 5. Antigravity & AI Agent Internal Cache
 # ==========================================
 .gemini/
-.agents/workflows/*.bak
+.agents/
+skills-lock.json
 task-*.log
 
 # ==========================================
 # 6. Operating System & Editor Metadata
 # ==========================================
 .DS_Store
+**/.DS_Store
 Thumbs.db
 .idea/
 .vscode/*
@@ -57,3 +59,11 @@ tmp-cache/
 coverage/
 playwright-report/
 test-results/
+
+# ==========================================
+# 7. Course Submission Packages & Local Docs
+# ==========================================
+docs/
+# ==========================================
+# 7. Course Submission Packages & Local Docs
+# ==========================================

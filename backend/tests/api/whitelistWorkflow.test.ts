@@ -1,8 +1,26 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import http from 'http';
 import { createApp } from '../../src/presentation/app.js';
+import type {
+  IGoogleTokenVerifier,
+  VerifiedGoogleIdentity
+} from '../../src/application/services/AuthService.js';
+import { AuthenticationException } from '../../src/domain/exceptions/DomainException.js';
 import { DatabaseConnection } from '../../src/infrastructure/persistence/DatabaseConnection.js';
 import { generateSessionToken } from '../../src/application/services/JwtTokenService.js';
+
+class MockGoogleTokenVerifier implements IGoogleTokenVerifier {
+  public async verifyCredential(credential: string): Promise<VerifiedGoogleIdentity> {
+    if (!credential.startsWith('mock-google:')) {
+      throw new AuthenticationException('Google authentication failed: Invalid ID token signature');
+    }
+    const [, email, name] = credential.split(':');
+    if (!email) {
+      throw new AuthenticationException('Google authentication failed: Missing email claim');
+    }
+    return { email, name: name || undefined };
+  }
+}
 
 describe('Whitelist Request, Approval & Revocation Workflow Integration Tests', () => {
   let server: http.Server;
@@ -32,7 +50,9 @@ describe('Whitelist Request, Approval & Revocation Workflow Integration Tests', 
   let approvedStaffId: string;
 
   beforeAll(async () => {
-    const app = createApp();
+    const app = createApp({
+      googleVerifier: new MockGoogleTokenVerifier()
+    });
     server = http.createServer(app);
 
     await new Promise<void>((resolve) => {
@@ -189,12 +209,11 @@ describe('Whitelist Request, Approval & Revocation Workflow Integration Tests', 
       expect(json.data.request.approved_role).toBe('STUDENT');
       expect(json.data.user.role).toBe('STUDENT');
 
-      const loginRes = await fetch(`${baseUrl}/api/auth/demo-session`, {
+      const loginRes = await fetch(`${baseUrl}/api/auth/google`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          email: testEmail1,
-          name: 'Visiting Scholar Dr. Rao'
+          credential: `mock-google:${testEmail1}:Visiting Scholar Dr. Rao`
         })
       });
 
@@ -222,12 +241,11 @@ describe('Whitelist Request, Approval & Revocation Workflow Integration Tests', 
       expect(json.success).toBe(true);
       expect(json.data.request.status).toBe('REJECTED');
 
-      const loginRes = await fetch(`${baseUrl}/api/auth/demo-session`, {
+      const loginRes = await fetch(`${baseUrl}/api/auth/google`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          email: testEmail2,
-          name: 'Night Shift Guard Vijay'
+          credential: `mock-google:${testEmail2}:Night Shift Guard Vijay`
         })
       });
 
@@ -283,12 +301,11 @@ describe('Whitelist Request, Approval & Revocation Workflow Integration Tests', 
       expect(json.data.role).toBe('ADMIN');
       directStaffId = json.data.id;
 
-      const loginRes = await fetch(`${baseUrl}/api/auth/demo-session`, {
+      const loginRes = await fetch(`${baseUrl}/api/auth/google`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          email: testDirectEmail,
-          name: 'Direct Admin Sharma'
+          credential: `mock-google:${testDirectEmail}:Direct Admin Sharma`
         })
       });
 
@@ -356,12 +373,11 @@ describe('Whitelist Request, Approval & Revocation Workflow Integration Tests', 
       const delJson = await delRes.json();
       expect(delJson.success).toBe(true);
 
-      const loginRes = await fetch(`${baseUrl}/api/auth/demo-session`, {
+      const loginRes = await fetch(`${baseUrl}/api/auth/google`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          email: testEmail1,
-          name: 'Visiting Scholar Dr. Rao'
+          credential: `mock-google:${testEmail1}:Visiting Scholar Dr. Rao`
         })
       });
 

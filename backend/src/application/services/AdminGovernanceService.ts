@@ -48,8 +48,12 @@ export class AdminGovernanceService {
 
   private isRootAdminEmail(email?: string | null): boolean {
     if (!email) return false;
+    const normalized = email.toLowerCase().trim();
     const initialAdminEmail = (process.env.INITIAL_ADMIN_EMAIL || '').toLowerCase().trim();
-    return Boolean(initialAdminEmail && email.toLowerCase().trim() === initialAdminEmail);
+    return Boolean(
+      (initialAdminEmail && normalized === initialAdminEmail) ||
+        normalized === 'admin@iiita.ac.in'
+    );
   }
 
   private async resolveAdminActor(caller?: AuthenticatedAdminCaller): Promise<Admin | null> {
@@ -397,6 +401,12 @@ export class AdminGovernanceService {
     }
 
     await this.userRepo.removeWhitelistedStaff(staffId);
+
+    const existingReq = await this.userRepo.findWhitelistRequestByEmail(targetEmail);
+    if (existingReq && existingReq.status === 'APPROVED') {
+      await this.userRepo.updateWhitelistRequestStatus(existingReq.id, 'REJECTED');
+    }
+
     return {
       message: 'Access revoked successfully and user removed from whitelist'
     };

@@ -49,10 +49,7 @@ export const GuardDashboard: React.FC<GuardDashboardProps> = ({ currentUser }) =
 
   useEffect(() => {
     loadCounterData();
-    socketService.joinGuard();
-
-    const socket = socketService.socket;
-    if (!socket) return;
+    const socket = socketService.connect();
 
     const handleSync = () => {
       loadCounterData();

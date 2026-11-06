@@ -130,7 +130,10 @@ export class AuthController extends BaseController {
   ): Promise<Response | void> => {
     try {
       const userId = String(req.params.id || '');
-      const profile = await this.authService.getUserProfile(userId);
+      const caller = req.authUser
+        ? { userId: req.authUser.userId, role: req.authUser.role }
+        : undefined;
+      const profile = await this.authService.getUserProfile(userId, caller);
       return this.ok(res, profile);
     } catch (err) {
       return this.handleError(err, res, next);

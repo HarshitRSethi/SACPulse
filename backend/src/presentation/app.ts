@@ -24,6 +24,16 @@ export interface CreateAppOptions {
   scheduler?: IssueRequestTTLScheduler;
 }
 
+export function resolveCorsOrigins(rawOrigin?: string): string | string[] {
+  const raw = (rawOrigin || 'http://localhost:5173').trim();
+  if (raw === '*') return '*';
+  const origins = raw
+    .split(',')
+    .map((o) => o.trim().replace(/\/+$/, ''))
+    .filter((o) => o.length > 0);
+  return origins.length === 1 ? origins[0] : origins;
+}
+
 export function createApp(options: CreateAppOptions = {}): Application {
   const app = express();
 
@@ -33,7 +43,7 @@ export function createApp(options: CreateAppOptions = {}): Application {
 
   app.use(
     cors({
-      origin: process.env.CORS_ORIGIN || 'http://localhost:5173',
+      origin: resolveCorsOrigins(process.env.CORS_ORIGIN),
       credentials: true
     })
   );

@@ -124,6 +124,7 @@ export function createApiRouter(deps: ApiRouterDependencies): Router {
   router.get(
     '/guard/requests/pending',
     authenticateJWT,
+    requireRole('GUARD', 'ADMIN'),
     issueReqCtrl.getPendingRequests
   );
 

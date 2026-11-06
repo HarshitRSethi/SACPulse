@@ -7,7 +7,16 @@ import type {
   User
 } from '../types/index';
 
-const API_BASE = '/api';
+function resolveApiBase(): string {
+  const configured = (import.meta.env.VITE_API_URL as string | undefined)?.trim();
+  if (!configured) {
+    return '/api';
+  }
+  const normalized = configured.replace(/\/+$/, '');
+  return normalized.endsWith('/api') ? normalized : `${normalized}/api`;
+}
+
+const API_BASE = resolveApiBase();
 
 const TOKEN_KEY = 'sacpulse_auth_token';
 const USER_KEY = 'sacpulse_auth_user';

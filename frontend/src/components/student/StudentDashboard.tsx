@@ -77,10 +77,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
   useEffect(() => {
     loadData();
-    socketService.joinStudent(currentUser.id);
-
-    const socket = socketService.socket;
-    if (!socket) return;
+    const socket = socketService.connect();
 
     const handleInventoryUpdated = () => {
       api.getInventory().then(setItems).catch(console.error);

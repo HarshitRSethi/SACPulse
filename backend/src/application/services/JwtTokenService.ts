@@ -27,13 +27,47 @@ function base64UrlDecodeToString(input: string): string {
  */
 export class JwtTokenService {
   private static readonly DEFAULT_EXPIRES_IN_SECONDS = 12 * 60 * 60; // 12 hours
+  private static readonly MIN_PRODUCTION_SECRET_LENGTH = 32;
+  private static readonly VALID_ROLES: readonly UserRole[] = ['STUDENT', 'GUARD', 'ADMIN'];
+  private static ephemeralDevSecret: string | null = null;
   private readonly secret: string;
 
   constructor(secret?: string) {
-    this.secret =
-      secret ||
-      process.env.JWT_SECRET ||
-      'sacpulse-institutional-hmac-sha256-secret-key';
+    this.secret = JwtTokenService.resolveSecret(secret);
+  }
+
+  /**
+   * Resolves the HMAC signing secret.
+   * - Production: `JWT_SECRET` is mandatory and must be at least 32 characters (fail fast at boot).
+   * - Development / test: when no secret is configured, a random per-process secret is generated
+   *   so that no predictable, source-controlled fallback key can ever be used to forge tokens.
+   */
+  public static resolveSecret(explicitSecret?: string): string {
+    const configured = explicitSecret || process.env.JWT_SECRET;
+    const isProduction = process.env.NODE_ENV === 'production';
+
+    if (configured) {
+      if (isProduction && configured.length < JwtTokenService.MIN_PRODUCTION_SECRET_LENGTH) {
+        throw new Error(
+          `JWT_SECRET must be at least ${JwtTokenService.MIN_PRODUCTION_SECRET_LENGTH} characters in production.`
+        );
+      }
+      return configured;
+    }
+
+    if (isProduction) {
+      throw new Error('JWT_SECRET environment variable is required in production.');
+    }
+
+    if (!JwtTokenService.ephemeralDevSecret) {
+      JwtTokenService.ephemeralDevSecret = crypto.randomBytes(32).toString('hex');
+      if (process.env.NODE_ENV !== 'test') {
+        console.warn(
+          '[security] JWT_SECRET is not set: using an ephemeral random secret. Sessions will be invalidated on restart.'
+        );
+      }
+    }
+    return JwtTokenService.ephemeralDevSecret;
   }
 
   public sign(
@@ -111,6 +145,7 @@ export class JwtTokenService {
       typeof payload.userId !== 'string' ||
       typeof payload.email !== 'string' ||
       typeof payload.role !== 'string' ||
+      !JwtTokenService.VALID_ROLES.includes(payload.role) ||
       typeof payload.exp !== 'number'
     ) {
       throw new AuthenticationException('Unauthorized: Incomplete JWT claims.');
@@ -133,16 +168,26 @@ export class JwtTokenService {
   }
 }
 
-const defaultJwtService = new JwtTokenService();
+let defaultJwtService: JwtTokenService | null = null;
+
+/**
+ * Lazily constructed so the secret is resolved after environment variables are loaded.
+ */
+function getDefaultJwtService(): JwtTokenService {
+  if (!defaultJwtService) {
+    defaultJwtService = new JwtTokenService();
+  }
+  return defaultJwtService;
+}
 
 export function generateSessionToken(
   payload: { userId: string; email: string; role: string },
   expiresInSeconds?: number
 ): string {
-  return defaultJwtService.sign(payload, expiresInSeconds);
+  return getDefaultJwtService().sign(payload, expiresInSeconds);
 }
 
 export function verifySessionToken(token: string): JwtSessionPayload | null {
-  return defaultJwtService.tryVerify(token);
+  return getDefaultJwtService().tryVerify(token);
 }
 

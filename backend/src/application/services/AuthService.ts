@@ -4,6 +4,7 @@ import {
   AccessRestrictedException,
   AuthenticationException,
   EntityNotFoundException,
+  UnauthorizedRoleException,
   ValidationException
 } from '../../domain/exceptions/DomainException.js';
 import type {
@@ -92,14 +93,31 @@ export class AuthService {
     this.googleVerifier = googleVerifier;
   }
 
+  /**
+   * Seeded accounts used by the viva/demo role switcher. Demo sessions can only be issued for
+   * these addresses, so leaving demo mode on can never impersonate real students or the root admin.
+   */
+  public static readonly DEFAULT_DEMO_ACCOUNT_EMAILS: readonly string[] = [
+    'studenta@iiita.ac.in',
+    'studentb@iiita.ac.in',
+    'guard@iiita.ac.in',
+    'guard.sac.iiita@gmail.com',
+    'admin@iiita.ac.in'
+  ];
+
+  /**
+   * Demo sessions are strictly opt-in and always disabled in production.
+   */
   public static isDemoAuthEnabled(): boolean {
-    if (process.env.ENABLE_DEMO_AUTH === 'true') {
-      return true;
-    }
-    if (process.env.ENABLE_DEMO_AUTH === 'false') {
-      return false;
-    }
     return process.env.NODE_ENV !== 'production';
+  }
+
+  public static getDemoAccountEmails(): ReadonlySet<string> {
+    const configured = process.env.DEMO_ACCOUNT_EMAILS;
+    const source = configured
+      ? configured.split(',')
+      : [...AuthService.DEFAULT_DEMO_ACCOUNT_EMAILS];
+    return new Set(source.map((e) => e.toLowerCase().trim()).filter((e) => e.length > 0));
   }
 
   /**
@@ -117,8 +135,9 @@ export class AuthService {
   }
 
   /**
-   * Explicit Demo / Viva Role Switcher Session — strictly gated by `ENABLE_DEMO_AUTH` / non-production environment.
-   * Applies the exact same `@iiita.ac.in` and `whitelisted_staff` authorization rules.
+   * Demo / viva role-switcher session. Requires a non-production
+   * environment and an allowlisted demo account; then applies the same `@iiita.ac.in` and
+   * `whitelisted_staff` authorization rules as Google sign-in.
    */
   public async authenticateDemoSession(email: unknown, name?: unknown): Promise<AuthSessionResult> {
     if (!AuthService.isDemoAuthEnabled()) {
@@ -129,6 +148,12 @@ export class AuthService {
 
     if (!email || typeof email !== 'string' || !email.trim()) {
       throw new ValidationException('Valid email is required to establish a demo session.');
+    }
+
+    if (!AuthService.getDemoAccountEmails().has(email.toLowerCase().trim())) {
+      throw new AccessRestrictedException(
+        'Demo sessions are only available for the seeded demo accounts.'
+      );
     }
 
     const cleanName = typeof name === 'string' && name.trim() ? name.trim() : undefined;
@@ -144,31 +169,38 @@ export class AuthService {
     let parsedRollNo: string | null = null;
     let staffMobile: string | null = null;
 
-    if (isIiitaEmail) {
+    const matchedStaff = await this.userRepo.findWhitelistedStaff(normalizedEmail);
+
+    if (matchedStaff) {
+      const staffRole = (matchedStaff.role || 'GUARD').toUpperCase() as UserRole;
+      assignedRole =
+        staffRole === 'STUDENT' || staffRole === 'GUARD' || staffRole === 'ADMIN'
+          ? staffRole
+          : 'GUARD';
+      staffMobile = matchedStaff.mobile_no ?? null;
+      if (isIiitaEmail) {
+        parsedRollNo = normalizedEmail.split('@')[0].toUpperCase();
+      }
+    } else if (isIiitaEmail) {
       parsedRollNo = normalizedEmail.split('@')[0].toUpperCase();
       assignedRole = 'STUDENT';
+    } else if (initialAdminEmail && normalizedEmail === initialAdminEmail) {
+      assignedRole = 'ADMIN';
     } else {
-      const matchedStaff = await this.userRepo.findWhitelistedStaff(normalizedEmail);
-      if (matchedStaff) {
-        const staffRole = (matchedStaff.role || 'GUARD').toUpperCase() as UserRole;
-        assignedRole =
-          staffRole === 'STUDENT' || staffRole === 'GUARD' || staffRole === 'ADMIN'
-            ? staffRole
-            : 'GUARD';
-        staffMobile = matchedStaff.mobile_no ?? null;
-      } else if (initialAdminEmail && normalizedEmail === initialAdminEmail) {
-        assignedRole = 'ADMIN';
-      } else {
-        const pendingReq = await this.userRepo.findWhitelistRequestByEmail(normalizedEmail);
-        throw new AccessRestrictedException(
-          'Access restricted to @iiita.ac.in or whitelisted accounts',
-          {
-            whitelistStatus: pendingReq ? pendingReq.status : 'NOT_REQUESTED',
-            userEmail: normalizedEmail,
-            userName: name || null
-          }
-        );
-      }
+      const pendingReq = await this.userRepo.findWhitelistRequestByEmail(normalizedEmail);
+      const effectiveStatus = pendingReq
+        ? pendingReq.status === 'APPROVED'
+          ? 'REJECTED'
+          : pendingReq.status
+        : 'NOT_REQUESTED';
+      throw new AccessRestrictedException(
+        'Access restricted to @iiita.ac.in or whitelisted accounts',
+        {
+          whitelistStatus: effectiveStatus,
+          userEmail: normalizedEmail,
+          userName: name || null
+        }
+      );
     }
 
     if (initialAdminEmail && normalizedEmail === initialAdminEmail) {
@@ -196,7 +228,10 @@ export class AuthService {
       });
     } else {
       const updates: { role?: UserRole; mobileNo?: string | null } = {};
-      if (user.getRole() !== assignedRole && (assignedRole === 'ADMIN' || !isIiitaEmail)) {
+      if (
+        user.getRole() !== assignedRole &&
+        (assignedRole === 'ADMIN' || !isIiitaEmail || Boolean(matchedStaff))
+      ) {
         updates.role = assignedRole;
       }
       if (!user.getMobileNo() && staffMobile) {
@@ -335,8 +370,8 @@ export class AuthService {
     const request = await this.userRepo.findWhitelistRequestByEmail(cleanEmail);
     if (request) {
       return {
-        status: request.status,
-        approvedRole: request.approved_role,
+        status: request.status === 'APPROVED' ? 'REJECTED' : request.status,
+        approvedRole: request.status === 'APPROVED' ? null : request.approved_role,
         reason: request.reason,
         createdAt: request.created_at,
         email: cleanEmail
@@ -349,7 +384,17 @@ export class AuthService {
     };
   }
 
-  public async getUserProfile(userId: string): Promise<UserProfileDTO> {
+  /**
+   * Returns a user profile. Students may only read their own profile (prevents IDOR access to
+   * other students' email and mobile numbers); counter staff and admins may read any profile.
+   */
+  public async getUserProfile(
+    userId: string,
+    caller?: { userId: string; role: UserRole }
+  ): Promise<UserProfileDTO> {
+    if (caller && caller.role === 'STUDENT' && caller.userId !== userId) {
+      throw new UnauthorizedRoleException('Students may only view their own profile.');
+    }
     const user = await this.userRepo.findById(userId);
     if (!user) {
       throw new EntityNotFoundException('User', userId);

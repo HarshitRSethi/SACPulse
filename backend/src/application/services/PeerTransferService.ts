@@ -232,6 +232,7 @@ export class PeerTransferService {
       batchId: splitResult.batch_id,
       oldEntryId: splitResult.old_entry_id,
       newEntryId: splitResult.new_entry_id,
+      oldHolderId: originalHolderId,
       newHolderId: studentId,
       newHolderName: splitResult.recipient_name,
       timestamp: new Date().toISOString()

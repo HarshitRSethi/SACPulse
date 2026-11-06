@@ -94,8 +94,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ currentUser }) =
   }, [statusFilter]);
 
   useEffect(() => {
-    const socket = socketService.socket;
-    if (!socket) return;
+    const socket = socketService.connect();
 
     const handleSync = () => {
       loadData(currentPage, statusFilter);

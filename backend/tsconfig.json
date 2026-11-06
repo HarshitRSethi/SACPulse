@@ -9,18 +9,7 @@
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
-    "forceConsistentCasingInFileNames": true,
-    "baseUrl": ".",
-    "paths": {
-      "@presentation/*": ["src/presentation/*"],
-      "@controllers/*": ["src/controllers/*"],
-      "@domain.entities/*": ["src/domain.entities/*"],
-      "@domain.services/*": ["src/domain.services/*"],
-      "@infrastructure.persistence/*": ["src/infrastructure.persistence/*"],
-      "@domain/entities/*": ["src/domain.entities/*"],
-      "@domain/services/*": ["src/domain.services/*"],
-      "@infrastructure/persistence/*": ["src/infrastructure.persistence/*"]
-    }
+    "forceConsistentCasingInFileNames": true
   },
   "include": ["src/**/*"],
   "exclude": ["node_modules", "dist"]

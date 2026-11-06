@@ -102,6 +102,7 @@ export class GuardCounterService {
 
     this.hub.emit('GUARD_QUEUE_UPDATED', {
       requestId,
+      studentId: result.student_id,
       status: 'APPROVED',
       approvedById: guardId,
       timestamp: new Date().toISOString()
@@ -138,6 +139,9 @@ export class GuardCounterService {
       throw new EntityNotFoundException('SACItem', entry.getItemId());
     }
 
+    const fromStudentId = entry.getStudentId();
+    const toStudentId = entry.getPendingTransferToId();
+
     // Execute GoF State Pattern (`entry.closeOnGuardReturn`) + GoF Template Method (`item.checkin`)
     entry.closeOnGuardReturn(false, now);
     item.checkin(1, false, now);
@@ -146,6 +150,8 @@ export class GuardCounterService {
 
     this.hub.emit('TRANSFER_STATE_CHANGED', {
       entryId,
+      fromStudentId,
+      toStudentId,
       status: 'RETURNED',
       pendingTransferToId: null,
       timestamp: new Date().toISOString()
@@ -165,6 +171,15 @@ export class GuardCounterService {
 
   public async returnBatchIntact(batchId: string, now: Date = new Date()) {
     const activeEntries = await this.registerLogRepo.findActive({ batchId });
+    const involvedStudentIds = Array.from(
+      new Set(
+        activeEntries.flatMap((e) =>
+          [e.getStudentId(), e.getPendingTransferToId()].filter(
+            (id): id is string => typeof id === 'string' && id.length > 0
+          )
+        )
+      )
+    );
 
     if (activeEntries.length > 0) {
       const batch = new CheckoutBatch(batchId, activeEntries);
@@ -186,6 +201,7 @@ export class GuardCounterService {
 
     this.hub.emit('TRANSFER_STATE_CHANGED', {
       batchId,
+      studentIds: involvedStudentIds,
       status: 'RETURNED',
       timestamp: new Date().toISOString()
     });
@@ -217,6 +233,9 @@ export class GuardCounterService {
       throw new EntityNotFoundException('SACItem', entry.getItemId());
     }
 
+    const fromStudentId = entry.getStudentId();
+    const toStudentId = entry.getPendingTransferToId();
+
     // Execute GoF State Pattern + polymorphic Template Method (`item.checkin(1, true, now)`) + Defaulter lock
     entry.closeOnGuardReturn(true, now);
     item.checkin(1, true, now);
@@ -228,6 +247,8 @@ export class GuardCounterService {
 
     this.hub.emit('TRANSFER_STATE_CHANGED', {
       entryId,
+      fromStudentId,
+      toStudentId,
       status: 'DAMAGED',
       pendingTransferToId: null,
       timestamp: new Date().toISOString()
